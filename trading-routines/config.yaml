@@ -1,0 +1,30 @@
+# Trading Routines — Configuration
+#
+# Cron expressions use the standard 5-field format :
+#   minute  hour  day_of_month  month  day_of_week
+#
+# Day of week : 0=Monday ... 6=Sunday
+# Timezone is defined via TIMEZONE env var (default Europe/Paris)
+
+routines:
+
+  - name: weekly
+    enabled: true
+    cron: "0 8 * * 1"              # Every Monday at 08:00 Europe/Paris
+    prompt_file: weekly.md
+    telegram_summary: true
+    summary_max_chars: 1500
+
+  - name: monthly
+    enabled: true
+    cron: "0 9 1 * *"              # 1st of every month at 09:00
+    prompt_file: monthly.md
+    telegram_summary: true
+    summary_max_chars: 2000
+
+  - name: quarterly
+    enabled: true
+    cron: "0 10 1 1,4,7,10 *"      # Jan 1, Apr 1, Jul 1, Oct 1 at 10:00
+    prompt_file: quarterly.md
+    telegram_summary: true
+    summary_max_chars: 2500

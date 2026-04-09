@@ -1,6 +1,13 @@
-# Trading Bot
+# Trading Stack
 
-Bot de trading automatisé multi-stratégies en Python. Exécute RSI Mean Reversion, MA Crossover et Breakout en parallèle via Alpaca, avec dashboards de monitoring, risk management strict et kill switches.
+Ce repo contient deux projets indépendants qui tournent côte à côte sur le même Raspberry Pi :
+
+| Projet | Rôle | README |
+|--------|------|--------|
+| **trading-bot** (racine) | Bot de trading automatisé — RSI, MA Crossover, Breakout via Alpaca, dashboards, risk management | ce fichier |
+| **trading-routines/** | Veille automatisée — briefings hebdo/mensuel/trimestriel via Claude + web_search, notifs Telegram | [trading-routines/README.md](trading-routines/README.md) |
+
+Les deux services sont **totalement indépendants** : pas de code partagé, pas de DB partagée. Ils partagent uniquement le canal Telegram (même token, préfixes différents : `[GLOBAL]`/`[STRAT:xxx]` pour le bot, `[TRADING-ROUTINES]` pour les routines).
 
 ---
 
@@ -74,6 +81,14 @@ sudo cp .env.example /etc/trading-bot/trading.env
 sudo nano /etc/trading-bot/trading.env
 ```
 
+Créer aussi le fichier de config des routines :
+
+```bash
+sudo cp trading-routines/.env.example /etc/trading-bot/routines.env
+sudo nano /etc/trading-bot/routines.env
+# Renseigner : ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+```
+
 Valeurs minimales à renseigner dans `/etc/trading-bot/trading.env` :
 
 ```bash
@@ -100,34 +115,44 @@ TELEGRAM_CHAT_ID_GLOBAL=
 ### 5. Créer les dossiers de données
 
 ```bash
+# Données du bot
 sudo mkdir -p /var/lib/trading-bot/{postgres,data,reports}
 sudo chown -R 1000:1000 /var/lib/trading-bot/data /var/lib/trading-bot/reports
 sudo chown -R 999:999 /var/lib/trading-bot/postgres   # uid postgres dans Docker
+
+# Rapports des routines (service indépendant, uid 1001 dans son image)
+sudo mkdir -p /var/lib/trading-routines/reports
+sudo chown -R 1001:1001 /var/lib/trading-routines/reports
 ```
 
 ### 6. Lancer les services
 
 ```bash
-cd /home/pi/trading-bot
+cd /home/pi/trading
 
-# Premier démarrage (construit l'image)
-docker compose -f docker/docker-compose.prod.yml up -d
+# Premier démarrage — construit les images et lance les 3 services (db + bot + routines)
+DB_PASSWORD=MOT_DE_PASSE_ICI docker compose -f docker-compose.prod.yml up -d
 
 # Vérifier que la DB est prête
-docker compose -f docker/docker-compose.prod.yml logs db | tail -5
+docker compose -f docker-compose.prod.yml logs db | tail -5
 
-# Appliquer les migrations
-docker compose -f docker/docker-compose.prod.yml exec bot alembic upgrade head
+# Appliquer les migrations du bot
+docker compose -f docker-compose.prod.yml exec bot alembic upgrade head
 
-# Vérifier les logs du bot
-docker compose -f docker/docker-compose.prod.yml logs bot -f
+# Vérifier les logs
+docker compose -f docker-compose.prod.yml logs bot -f
+docker compose -f docker-compose.prod.yml logs trading-routines -f
+
+# Test manuel d'une routine (optionnel)
+docker compose -f docker-compose.prod.yml run --rm trading-routines \
+  python trading_routines.py run weekly
 ```
 
 ### 7. Remplir les données historiques
 
 ```bash
 # Backfill 2 ans de données 15m pour toutes les stratégies
-docker compose -f docker/docker-compose.prod.yml exec bot \
+docker compose -f docker-compose.prod.yml exec bot \
   python scripts/backfill_data.py \
   --provider alpaca \
   --symbols SPY,QQQ,IWM,AAPL,MSFT,TSLA,NVDA,COIN \
@@ -136,19 +161,22 @@ docker compose -f docker/docker-compose.prod.yml exec bot \
 
 ### 8. Configurer le service systemd (démarrage automatique)
 
+Le service gère les **deux projets** ensemble (bot + routines) :
+
 ```bash
-sudo tee /etc/systemd/system/trading-bot.service << 'EOF'
+sudo tee /etc/systemd/system/trading-stack.service << 'EOF'
 [Unit]
-Description=Trading Bot
+Description=Trading Stack (bot + routines)
 Requires=docker.service
 After=docker.service network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/pi/trading-bot
-ExecStart=/usr/bin/docker compose -f docker/docker-compose.prod.yml up -d
-ExecStop=/usr/bin/docker compose -f docker/docker-compose.prod.yml down
+WorkingDirectory=/home/pi/trading
+Environment=DB_PASSWORD=MOT_DE_PASSE_ICI
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
 Restart=on-failure
 
 [Install]
@@ -156,11 +184,11 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable trading-bot.service
-sudo systemctl start trading-bot.service
+sudo systemctl enable trading-stack.service
+sudo systemctl start trading-stack.service
 
 # Vérifier
-sudo systemctl status trading-bot.service
+sudo systemctl status trading-stack.service
 ```
 
 ---
@@ -195,15 +223,15 @@ Le dashboard devient accessible depuis votre téléphone ou ordinateur via `http
 ## Mise à jour
 
 ```bash
-cd /home/pi/trading-bot
+cd /home/pi/trading
 git pull origin main
 
-# Rebuild et redémarrage
-docker compose -f docker/docker-compose.prod.yml build bot
-docker compose -f docker/docker-compose.prod.yml up -d
+# Rebuild et redémarrage (les deux services)
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
 
 # Appliquer les nouvelles migrations si besoin
-docker compose -f docker/docker-compose.prod.yml exec bot alembic upgrade head
+docker compose -f docker-compose.prod.yml exec bot alembic upgrade head
 ```
 
 ---
@@ -211,23 +239,33 @@ docker compose -f docker/docker-compose.prod.yml exec bot alembic upgrade head
 ## Commandes courantes
 
 ```bash
-# Voir les logs en direct
-docker compose -f docker/docker-compose.prod.yml logs bot -f
+# Logs de tous les services
+docker compose -f docker-compose.prod.yml logs -f
+
+# Logs par service
+docker compose -f docker-compose.prod.yml logs bot -f
+docker compose -f docker-compose.prod.yml logs trading-routines -f
 
 # Logs d'une stratégie spécifique
-docker compose -f docker/docker-compose.prod.yml logs bot -f | grep rsi_mean_reversion
+docker compose -f docker-compose.prod.yml logs bot -f | grep rsi_mean_reversion
 
 # Statut des services
-docker compose -f docker/docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml ps
 
-# Redémarrer le bot (sans toucher la DB)
-docker compose -f docker/docker-compose.prod.yml restart bot
+# Redémarrer un service sans toucher les autres
+docker compose -f docker-compose.prod.yml restart bot
+docker compose -f docker-compose.prod.yml restart trading-routines
 
 # Arrêt propre
-docker compose -f docker/docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml down
 
-# Shell dans le conteneur
-docker compose -f docker/docker-compose.prod.yml exec bot bash
+# Shell dans un conteneur
+docker compose -f docker-compose.prod.yml exec bot bash
+docker compose -f docker-compose.prod.yml exec trading-routines sh
+
+# Déclencher une routine manuellement
+docker compose -f docker-compose.prod.yml run --rm trading-routines \
+  python trading_routines.py run weekly
 ```
 
 ---
@@ -236,15 +274,15 @@ docker compose -f docker/docker-compose.prod.yml exec bot bash
 
 ```bash
 # Couper TOUTES les stratégies (kill global)
-docker compose -f docker/docker-compose.prod.yml exec bot \
+docker compose -f docker-compose.prod.yml exec bot \
   python scripts/killswitch.py --scope global --engage --reason "intervention manuelle"
 
 # Couper UNE stratégie
-docker compose -f docker/docker-compose.prod.yml exec bot \
+docker compose -f docker-compose.prod.yml exec bot \
   python scripts/killswitch.py --scope strategy --name rsi_mean_reversion --engage
 
 # Relâcher (le bot reprend)
-docker compose -f docker/docker-compose.prod.yml exec bot \
+docker compose -f docker-compose.prod.yml exec bot \
   python scripts/killswitch.py --scope global --release
 ```
 
@@ -256,11 +294,11 @@ docker compose -f docker/docker-compose.prod.yml exec bot \
 
 ```bash
 # Backup manuel de la DB
-docker compose -f docker/docker-compose.prod.yml exec db \
+docker compose -f docker-compose.prod.yml exec db \
   pg_dump -U trading trading | gzip > /var/lib/trading-bot/backup_$(date +%Y%m%d).sql.gz
 
 # Planifier un backup automatique quotidien (cron)
-(crontab -l 2>/dev/null; echo "0 3 * * * docker compose -f /home/pi/trading-bot/docker/docker-compose.prod.yml exec -T db pg_dump -U trading trading | gzip > /var/lib/trading-bot/backup_\$(date +\%Y\%m\%d).sql.gz") | crontab -
+(crontab -l 2>/dev/null; echo "0 3 * * * docker compose -f /home/pi/trading/docker-compose.prod.yml exec -T db pg_dump -U trading trading | gzip > /var/lib/trading-bot/backup_\$(date +\%Y\%m\%d).sql.gz") | crontab -
 ```
 
 ---
@@ -271,7 +309,7 @@ docker compose -f docker/docker-compose.prod.yml exec db \
 
 1. Vérifier que la gate est passée pour la stratégie :
    ```bash
-   docker compose -f docker/docker-compose.prod.yml exec bot \
+   docker compose -f docker-compose.prod.yml exec bot \
      python scripts/check_gate.py --strategy rsi_mean_reversion
    ```
 
@@ -287,7 +325,7 @@ docker compose -f docker/docker-compose.prod.yml exec db \
 4. Définir la variable d'approbation et redémarrer :
    ```bash
    echo 'TRADING_BOT_LIVE_APPROVAL_RSI_MEAN_REVERSION=yes' | sudo tee -a /etc/trading-bot/trading.env
-   docker compose -f docker/docker-compose.prod.yml restart bot
+   docker compose -f docker-compose.prod.yml restart bot
    ```
 
 ---

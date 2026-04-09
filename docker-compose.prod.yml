@@ -1,0 +1,87 @@
+# =============================================================================
+# Trading Stack — Production (Raspberry Pi)
+# Orchestrates: TimescaleDB + trading-bot + trading-routines
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml logs -f
+#   docker compose -f docker-compose.prod.yml logs -f bot
+#   docker compose -f docker-compose.prod.yml logs -f trading-routines
+#
+# Each service has its own .env for secret isolation.
+# Secrets layout on Raspberry Pi:
+#   /etc/trading-bot/trading.env       ← bot secrets (Alpaca, DB, Telegram, ...)
+#   /etc/trading-bot/routines.env      ← routines secrets (Anthropic, Telegram, ...)
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + TimescaleDB — trading bot persistence layer
+  # ---------------------------------------------------------------------------
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${DB_USER:-trading}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required in environment}
+      POSTGRES_DB: ${DB_NAME:-trading}
+    volumes:
+      - /var/lib/trading-bot/postgres:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trading}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # Trading bot — strategies, risk management, dashboards
+  # ---------------------------------------------------------------------------
+  bot:
+    image: ghcr.io/everyways/trading-bot:latest
+    env_file:
+      - /etc/trading-bot/trading.env
+    ports:
+      - "127.0.0.1:8000:8000"      # LAN only — use Tailscale for remote access
+    volumes:
+      - /var/lib/trading-bot/data:/app/data
+      - /var/lib/trading-bot/reports:/app/reports
+      - /etc/trading-bot/config:/app/config:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # ---------------------------------------------------------------------------
+  # trading-routines — weekly/monthly/quarterly intel briefings via Claude API
+  # Completely independent from the bot — no shared DB, no shared code.
+  # Shares only the Telegram channel (same token, different message prefix).
+  # ---------------------------------------------------------------------------
+  trading-routines:
+    build:
+      context: ./trading-routines
+      dockerfile: Dockerfile
+    image: trading-routines:latest
+    container_name: trading-routines
+    env_file:
+      - /etc/trading-bot/routines.env
+    volumes:
+      - /var/lib/trading-routines/reports:/app/reports
+      - ./trading-routines/config.yaml:/app/config.yaml:ro
+      - ./trading-routines/prompts:/app/prompts:ro
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

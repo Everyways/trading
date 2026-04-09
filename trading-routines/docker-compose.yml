@@ -1,0 +1,18 @@
+services:
+  trading-routines:
+    build: .
+    image: trading-routines:latest
+    container_name: trading-routines
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
+      - ./config.yaml:/app/config.yaml:ro
+      - ./prompts:/app/prompts:ro
+    # Logs accessible via `docker compose logs -f trading-routines`
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
