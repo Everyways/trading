@@ -1,0 +1,34 @@
+name: ma_crossover
+version: "1.0.0"
+enabled: true
+mode: paper
+provider: alpaca
+
+universe:
+  - { symbol: QQQ,  asset_class: equity }
+  - { symbol: AAPL, asset_class: equity }
+  - { symbol: MSFT, asset_class: equity }
+
+timeframe: 15m
+lookback: 300
+
+params:
+  ma_short: 20
+  ma_long: 50
+  ma_type: EMA
+  atr_period: 14
+  min_atr_pct: 0.5
+  stop_loss_atr_mult: 2.0
+  trailing_stop_enabled: true
+
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_concurrent_positions: 2
+  max_daily_loss_pct: 2.0
+  max_drawdown_pct: 8.0
+  max_exposure_pct: 20.0
+  max_orders_per_minute: 5
+
+execution:
+  order_type: market
+  time_in_force: day

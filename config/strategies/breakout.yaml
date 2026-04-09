@@ -1,0 +1,52 @@
+name: breakout
+version: "1.0.0"
+enabled: true
+mode: paper
+provider: alpaca
+
+# Universe resolved at boot by UniverseResolver (§7.4).
+# First profile whose conditions all pass is selected.
+universe_resolution:
+  strategy: first_available
+  profiles:
+    - name: crypto_primary
+      conditions:
+        asset_class_supported: crypto
+        instruments_tradable: ["BTC/USD", "ETH/USD"]
+      universe:
+        - { symbol: "BTC/USD", asset_class: crypto }
+        - { symbol: "ETH/USD", asset_class: crypto }
+
+    - name: equity_fallback
+      conditions:
+        asset_class_supported: equity
+        instruments_tradable: ["TSLA", "NVDA", "COIN"]
+      universe:
+        - { symbol: TSLA, asset_class: equity }
+        - { symbol: NVDA, asset_class: equity }
+        - { symbol: COIN, asset_class: equity }
+
+on_no_profile_match: disable_strategy   # alternative: "fail_boot"
+
+timeframe: 15m
+lookback: 100
+
+params:
+  lookback_bars: 20
+  volume_ma_period: 20
+  volume_multiplier: 1.5
+  stop_loss_pct: 3.0
+  take_profit_pct: 6.0
+  cooldown_bars: 10
+
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_concurrent_positions: 1
+  max_daily_loss_pct: 3.0
+  max_drawdown_pct: 10.0
+  max_exposure_pct: 15.0
+  max_orders_per_minute: 5
+
+execution:
+  order_type: market
+  time_in_force: gtc

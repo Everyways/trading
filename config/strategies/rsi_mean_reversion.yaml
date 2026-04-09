@@ -1,0 +1,38 @@
+name: rsi_mean_reversion
+version: "1.0.0"
+enabled: true
+mode: paper                          # paper | live (independent per strategy)
+
+provider: alpaca
+
+universe:
+  - symbol: SPY
+    asset_class: equity
+  - symbol: QQQ
+    asset_class: equity
+  - symbol: IWM
+    asset_class: equity
+
+timeframe: 15m
+lookback: 250
+
+params:
+  rsi_period: 14
+  oversold: 30
+  overbought: 70
+  trend_filter_ma: 200
+  stop_loss_pct: 2.0
+  take_profit_pct: 4.0
+  max_holding_bars: 96
+
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_concurrent_positions: 2
+  max_daily_loss_pct: 2.0
+  max_drawdown_pct: 8.0
+  max_exposure_pct: 20.0
+  max_orders_per_minute: 5
+
+execution:
+  order_type: market
+  time_in_force: day

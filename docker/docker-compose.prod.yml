@@ -1,0 +1,45 @@
+version: "3.9"
+
+# Production compose — Raspberry Pi / laptop (paper only)
+# Usage: docker compose -f docker/docker-compose.prod.yml up -d
+
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${DB_USER:-trading}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
+      POSTGRES_DB: ${DB_NAME:-trading}
+    volumes:
+      - /var/lib/trading-bot/postgres:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trading}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  bot:
+    image: ghcr.io/everyways/trading-bot:latest
+    env_file:
+      - /etc/trading-bot/trading.env
+    ports:
+      - "127.0.0.1:8000:8000"      # LAN only — use Tailscale or Caddy for remote
+    volumes:
+      - /var/lib/trading-bot/data:/app/data
+      - /var/lib/trading-bot/reports:/app/reports
+      - /etc/trading-bot/config:/app/config:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"

@@ -1,0 +1,18 @@
+global_limits:
+  max_total_exposure_pct: 50.0
+  max_total_drawdown_pct: 10.0        # global kill switch if reached
+  max_daily_loss_pct: 3.0
+  max_monthly_loss_eur: 50.0          # HARD STOP PERMANENT (§10.5)
+  min_account_equity_usd: 400         # alert if equity < $400
+  max_orders_per_minute_global: 20
+  max_concurrent_positions_global: 6
+  max_broker_errors_per_minute: 5
+
+capital_allocation:
+  live_total_pool_eur: 500.0
+  allocation_strategy: equal_per_enabled_live_strategy
+
+pdt_compliance:
+  enabled: true                       # Pattern Day Trader rule compliance
+  mode: overnight_hold                # force hold until next trading day
+  max_day_trades_per_5d: 3            # auto-pause at 3rd day trade
