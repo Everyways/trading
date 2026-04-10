@@ -65,6 +65,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ANN"]
 "app/providers/alpaca/*.py" = ["TCH"]    # alpaca imports used at runtime (dicts, constructors)
+"app/data/*.py" = ["TCH"]               # runtime imports for SQLModel session / domain types
 "tests/fixtures/dummy_provider/*.py" = ["TCH"]  # test fixture, TC not relevant
 
 [tool.mypy]

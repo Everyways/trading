@@ -35,7 +35,7 @@ htmlcov/
 .mypy_cache/
 
 # Data
-data/
+/data/
 *.db
 *.sqlite
 
