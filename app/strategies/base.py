@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 from pydantic import BaseModel
@@ -28,7 +28,7 @@ class StrategyContext(BaseModel):
     mode: StrategyMode
     params: dict[str, Any]
     instrument: Instrument
-    current_position: Optional[Position]
+    current_position: Position | None
     account_equity: Decimal
     current_time: datetime          # timestamp of the last closed candle
 
@@ -53,7 +53,7 @@ class Strategy(ABC):
         self,
         candles: pd.DataFrame,
         ctx: StrategyContext,
-    ) -> Optional[Signal]:
+    ) -> Signal | None:
         """Generate a trading signal from closed candles and context.
 
         Args:
@@ -70,7 +70,7 @@ class Strategy(ABC):
             - Must not modify candles in-place
         """
 
-    def validate_params(self, params: dict[str, Any]) -> None:
+    def validate_params(self, params: dict[str, Any]) -> None:  # noqa: B027
         """Validate strategy parameters at boot time.
 
         Raise ValueError with a descriptive message if any parameter is invalid.
