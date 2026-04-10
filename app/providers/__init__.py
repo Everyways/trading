@@ -6,4 +6,4 @@ decorator runs at import time.
 
 # Providers are imported lazily to avoid errors when dependencies are missing
 # in test environments. Add new providers here.
-# from app.providers.alpaca import provider as _alpaca  # noqa: F401
+from app.providers.alpaca import provider as _alpaca  # noqa: F401
