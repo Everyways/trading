@@ -67,6 +67,8 @@ ignore = [
 "app/providers/alpaca/*.py" = ["TCH"]    # alpaca imports used at runtime (dicts, constructors)
 "app/data/*.py" = ["TCH"]               # runtime imports for SQLModel session / domain types
 "app/strategies/*.py" = ["TCH"]         # runtime imports used by Pydantic StrategyContext
+"app/risk/*.py" = ["TCH"]               # runtime domain types in method signatures
+"app/execution/*.py" = ["TCH"]          # runtime domain types in method signatures
 "tests/fixtures/dummy_provider/*.py" = ["TCH"]  # test fixture, TC not relevant
 
 [tool.mypy]
