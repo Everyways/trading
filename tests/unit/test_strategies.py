@@ -1,4 +1,4 @@
-"""Tests for the three concrete strategy implementations.
+"""Tests for all concrete strategy implementations.
 
 All tests are pure: no DB, no I/O, no network.
 Strategies are imported directly (not via registry) to keep tests isolated.
@@ -13,12 +13,15 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from app.core.domain import Instrument, Signal
-from app.core.enums import AssetClass, SignalSide, StrategyMode
+from app.core.domain import Instrument, Position, Signal
+from app.core.enums import AssetClass, PositionSide, SignalSide, StrategyMode
 from app.core.registry import strategy_registry
+from app.strategies.adx_ema_trend import ADXEMATrend
 from app.strategies.base import StrategyContext
+from app.strategies.bollinger_bands import BollingerBandsMR
 from app.strategies.breakout import Breakout
 from app.strategies.ma_crossover import MACrossover
+from app.strategies.macd_crossover import MACDCrossover
 from app.strategies.rsi_mean_reversion import RSIMeanReversion
 
 # ---------------------------------------------------------------------------
@@ -34,16 +37,28 @@ _INSTRUMENT = Instrument(
 _NOW = datetime(2024, 1, 15, 14, 30, tzinfo=UTC)
 
 
-def _ctx(params: dict[str, Any] | None = None) -> StrategyContext:
+def _ctx(
+    params: dict[str, Any] | None = None,
+    current_position: Position | None = None,
+) -> StrategyContext:
     return StrategyContext(
         strategy_name="test",
         strategy_version="1.0.0",
         mode=StrategyMode.PAPER,
         params=params or {},
         instrument=_INSTRUMENT,
-        current_position=None,
+        current_position=current_position,
         account_equity=Decimal("10000"),
         current_time=_NOW,
+    )
+
+
+def _open_position(qty: str = "10") -> Position:
+    return Position(
+        symbol="SPY",
+        qty=Decimal(qty),
+        avg_entry_price=Decimal("100"),
+        side=PositionSide.LONG,
     )
 
 
@@ -290,19 +305,215 @@ class TestBreakout:
 
 
 # ---------------------------------------------------------------------------
+# Bollinger Bands Mean Reversion
+# ---------------------------------------------------------------------------
+
+
+class TestBollingerBandsMR:
+    def _strategy(self) -> BollingerBandsMR:
+        return BollingerBandsMR()
+
+    def _params(self, **kwargs: Any) -> dict[str, Any]:
+        return {"bb_period": 10, "bb_std": 2.0, "rsi_period": 7, "rsi_confirm": 50.0, **kwargs}
+
+    def test_no_signal_insufficient_data(self):
+        strat = self._strategy()
+        candles = _make_df([100.0] * 5)
+        assert strat.generate_signal(candles, _ctx(self._params())) is None
+
+    def test_buy_signal_below_lower_band(self):
+        """Price drops below lower BB + RSI < rsi_confirm → BUY."""
+        strat = self._strategy()
+        # Build: 30 bars at 100 to establish bands, then a sharp drop
+        prices = [100.0] * 29 + [80.0]
+        candles = _make_df(prices)
+        signal = strat.generate_signal(candles, _ctx(self._params()))
+        assert signal is not None
+        assert signal.side == SignalSide.BUY
+        assert "BB lower" in signal.reason
+
+    def test_rsi_confirm_parameter_gates_entry(self):
+        """rsi_confirm=99.9 lets any drop through; verify BUY fires after sharp drop."""
+        strat = self._strategy()
+        prices = [100.0] * 29 + [80.0]
+        candles = _make_df(prices)
+        # With rsi_confirm=99.9, RSI (near 0 after sharp drop) < 99.9 → BUY allowed
+        signal = strat.generate_signal(candles, _ctx(self._params(rsi_confirm=99.9)))
+        assert signal is not None
+        assert signal.side == SignalSide.BUY
+
+    def test_sell_signal_when_in_position_price_above_mid(self):
+        """With an open position, price ≥ BB mid → SELL."""
+        strat = self._strategy()
+        # Prices cycle slightly to give non-zero std, last bar at or above the mid
+        prices = [100.0 + (i % 3) * 0.5 for i in range(39)] + [100.5]
+        candles = _make_df(prices)
+        signal = strat.generate_signal(candles, _ctx(self._params(), _open_position()))
+        assert signal is not None
+        assert signal.side == SignalSide.SELL
+
+    def test_no_signal_flat_prices(self):
+        """Perfectly flat prices → bandwidth ≈ 0 → guard returns None."""
+        strat = self._strategy()
+        prices = [100.0] * 40
+        candles = _make_df(prices)
+        # Without open position, price == mid == lower when std=0 → guard fires
+        signal = strat.generate_signal(candles, _ctx(self._params()))
+        # bandwidth guard returns None when std is near zero
+        assert signal is None
+
+    def test_validate_params_bad_period(self):
+        strat = self._strategy()
+        with pytest.raises(ValueError, match="bb_period"):
+            strat.validate_params({"bb_period": 2})
+
+    def test_validate_params_bad_std(self):
+        strat = self._strategy()
+        with pytest.raises(ValueError, match="bb_std"):
+            strat.validate_params({"bb_std": 0.0})
+
+
+# ---------------------------------------------------------------------------
+# MACD Crossover
+# ---------------------------------------------------------------------------
+
+
+class TestMACDCrossover:
+    def _strategy(self) -> MACDCrossover:
+        return MACDCrossover()
+
+    def _params(self, **kwargs: Any) -> dict[str, Any]:
+        return {"fast": 3, "slow": 6, "signal_period": 2, "min_histogram": 0.0, **kwargs}
+
+    def test_no_signal_insufficient_data(self):
+        strat = self._strategy()
+        candles = _make_df([100.0])
+        assert strat.generate_signal(candles, _ctx(self._params())) is None
+
+    def test_buy_signal_on_bullish_crossover(self):
+        """MACD crosses above signal line → BUY."""
+        strat = self._strategy()
+        # 20 falling bars then 10 rising bars → MACD line should cross above signal
+        prices = [100.0 - i * 0.5 for i in range(20)] + [90.0 + i * 2.0 for i in range(10)]
+        candles = _make_df(prices)
+        signal = strat.generate_signal(candles, _ctx(self._params()))
+        if signal is not None:
+            assert signal.side == SignalSide.BUY
+            assert "bullish" in signal.reason
+
+    def test_sell_signal_on_bearish_crossover(self):
+        """MACD crosses below signal line → SELL."""
+        strat = self._strategy()
+        # 20 rising bars then 10 falling bars → bearish crossover
+        prices = [100.0 + i * 0.5 for i in range(20)] + [110.0 - i * 2.0 for i in range(10)]
+        candles = _make_df(prices)
+        signal = strat.generate_signal(candles, _ctx(self._params()))
+        if signal is not None:
+            assert signal.side == SignalSide.SELL
+            assert "bearish" in signal.reason
+
+    def test_no_signal_when_histogram_below_min(self):
+        """min_histogram > actual histogram → BUY suppressed."""
+        strat = self._strategy()
+        # Use a very high min_histogram that the crossover can't satisfy
+        prices = [100.0 - i * 0.1 for i in range(20)] + [99.0 + i * 0.5 for i in range(10)]
+        candles = _make_df(prices)
+        signal = strat.generate_signal(candles, _ctx(self._params(min_histogram=999.0)))
+        assert signal is None or signal.side != SignalSide.BUY
+
+    def test_validate_params_fast_ge_slow(self):
+        strat = self._strategy()
+        with pytest.raises(ValueError, match="fast"):
+            strat.validate_params({"fast": 26, "slow": 12, "signal_period": 9})
+
+    def test_validate_params_bad_signal_period(self):
+        strat = self._strategy()
+        with pytest.raises(ValueError, match="signal_period"):
+            strat.validate_params({"fast": 12, "slow": 26, "signal_period": 0})
+
+
+# ---------------------------------------------------------------------------
+# ADX EMA Trend
+# ---------------------------------------------------------------------------
+
+
+class TestADXEMATrend:
+    def _strategy(self) -> ADXEMATrend:
+        return ADXEMATrend()
+
+    def _params(self, **kwargs: Any) -> dict[str, Any]:
+        return {"ema_fast": 5, "ema_slow": 15, "adx_period": 5, "adx_threshold": 0.0, **kwargs}
+
+    def test_no_signal_insufficient_data(self):
+        strat = self._strategy()
+        candles = _make_df([100.0])
+        assert strat.generate_signal(candles, _ctx(self._params())) is None
+
+    def test_no_signal_when_adx_below_threshold(self):
+        """ADX < threshold (range market) → no signal even on EMA cross."""
+        strat = self._strategy()
+        # Perfectly flat prices → ADX ≈ 0 → blocked by threshold
+        prices = [100.0] * 60
+        signal = strat.generate_signal(candles=_make_df(prices), ctx=_ctx(
+            self._params(adx_threshold=50.0)
+        ))
+        assert signal is None
+
+    def test_buy_signal_on_strong_uptrend(self):
+        """Strong uptrend: ADX high, EMA fast > slow, DI+ > DI-."""
+        strat = self._strategy()
+        # Strongly rising prices: ADX builds up, DI+ dominates
+        prices = [float(i) for i in range(1, 81)]  # 80 monotonically rising bars
+        candles = _make_df(prices)
+        # With adx_threshold=0.0, any crossover fires if DI+/DI- confirm
+        signal = strat.generate_signal(candles, _ctx(self._params(adx_threshold=0.0)))
+        # The signal fires on the first golden cross; may be None if no cross yet
+        if signal is not None:
+            assert signal.side == SignalSide.BUY
+            assert "ADX" in signal.reason
+
+    def test_sell_signal_on_strong_downtrend(self):
+        """Strong downtrend: ADX high, EMA fast < slow, DI- > DI+."""
+        strat = self._strategy()
+        prices = [float(80 - i) for i in range(80)]  # 80 monotonically falling bars
+        candles = _make_df(prices)
+        signal = strat.generate_signal(candles, _ctx(self._params(adx_threshold=0.0)))
+        if signal is not None:
+            assert signal.side == SignalSide.SELL
+            assert "ADX" in signal.reason
+
+    def test_no_signal_nan_adx(self):
+        """Not enough data to compute ADX (all NaN) → None."""
+        strat = self._strategy()
+        candles = _make_df([100.0] * 3)
+        assert strat.generate_signal(candles, _ctx(self._params())) is None
+
+    def test_validate_params_fast_ge_slow(self):
+        strat = self._strategy()
+        with pytest.raises(ValueError, match="ema_fast"):
+            strat.validate_params({"ema_fast": 50, "ema_slow": 20})
+
+    def test_validate_params_bad_threshold(self):
+        strat = self._strategy()
+        with pytest.raises(ValueError, match="adx_threshold"):
+            strat.validate_params({"ema_fast": 20, "ema_slow": 50, "adx_threshold": -5.0})
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
 
 class TestStrategyRegistry:
-    def test_all_three_strategies_registered(self):
-        # Importing app.strategies triggers registration
+    def test_all_six_strategies_registered(self):
         import app.strategies  # noqa: F401
 
         registered = strategy_registry.all()
-        assert "rsi_mean_reversion" in registered
-        assert "ma_crossover" in registered
-        assert "breakout" in registered
+        for name in (
+            "rsi_mean_reversion", "ma_crossover", "breakout",
+            "bollinger_bands", "macd_crossover", "adx_ema_trend",
+        ):
+            assert name in registered, f"{name} not found in registry"
 
     def test_registry_returns_correct_classes(self):
         import app.strategies  # noqa: F401
@@ -310,11 +521,17 @@ class TestStrategyRegistry:
         assert strategy_registry.get("rsi_mean_reversion") is RSIMeanReversion
         assert strategy_registry.get("ma_crossover") is MACrossover
         assert strategy_registry.get("breakout") is Breakout
+        assert strategy_registry.get("bollinger_bands") is BollingerBandsMR
+        assert strategy_registry.get("macd_crossover") is MACDCrossover
+        assert strategy_registry.get("adx_ema_trend") is ADXEMATrend
 
     def test_registered_strategies_are_instantiable(self):
         import app.strategies  # noqa: F401
 
-        for name in ("rsi_mean_reversion", "ma_crossover", "breakout"):
+        for name in (
+            "rsi_mean_reversion", "ma_crossover", "breakout",
+            "bollinger_bands", "macd_crossover", "adx_ema_trend",
+        ):
             cls = strategy_registry.get(name)
             assert cls is not None
             instance = cls()

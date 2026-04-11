@@ -23,6 +23,25 @@ Catégorie d'un instrument financier. Le bot supporte :
 - `crypto` : cryptomonnaies (BTC, ETH) via Alpaca
 - `option` : options (non tradées pour l'instant)
 
+### ADX — Average Directional Index (indice directionnel moyen)
+Indicateur développé par J. Welles Wilder qui mesure la **force** d'une tendance,
+indépendamment de sa direction. Compris entre 0 et 100 :
+
+| Valeur ADX | Interprétation |
+|------------|----------------|
+| < 20 | Absence de tendance (range) |
+| 20–25 | Tendance naissante |
+| 25–50 | Tendance établie |
+| > 50 | Tendance forte (rare) |
+
+L'ADX est calculé à partir des lignes directionnelles DI+ et DI- :
+- `DI+` (Directional Indicator positif) : force du mouvement haussier
+- `DI-` (Directional Indicator négatif) : force du mouvement baissier
+- `ADX = EMA(|DI+ − DI−| / (DI+ + DI−) × 100)`
+
+**Utilisation dans le bot :** la stratégie `adx_ema_trend` n'émet de signaux que
+quand `ADX ≥ adx_threshold` (défaut 25), évitant les faux croisements en range.
+
 ### ATR — Average True Range (plage réelle moyenne)
 Indicateur de volatilité. Mesure l'amplitude moyenne des mouvements de prix sur
 N bougies, en tenant compte des gaps entre séances. Un ATR élevé = marché
@@ -52,6 +71,23 @@ possible).
 
 **Métriques produites par le backtest :**
 - Net PnL, Return, Max Drawdown, Sharpe ratio, Profit Factor, Win rate
+
+### Bandes de Bollinger (Bollinger Bands)
+Enveloppe statistique autour d'une moyenne mobile (MA20 par défaut), délimitée par
+±N écarts-types du prix sur la même fenêtre (N=2 par défaut). Environ 95% des
+clôtures se situent **à l'intérieur** des bandes sur un marché normal.
+
+```
+Bande sup  = MA(20) + 2 × σ(20)
+Bande mid  = MA(20)          ← retour à la moyenne attendu
+Bande inf  = MA(20) − 2 × σ(20)
+```
+
+- **Bande large** = forte volatilité récente
+- **Bande étroite** (squeeze) = calme précédant souvent une expansion
+
+**Utilisation dans le bot :** la stratégie `bollinger_bands` achète quand
+le prix clôture sous la bande inférieure avec confirmation RSI.
 
 ### Bar / Bougie (candle)
 Unité de données de marché pour une période donnée. Contient :
@@ -104,6 +140,19 @@ est appliquée pour simuler les frais réels (spread bid/ask, slippage).
 ---
 
 ## D
+
+### DI+ / DI- — Directional Indicators (indicateurs directionnels)
+Composantes du système DMI de Wilder, calculées en parallèle avec l'ADX.
+
+- **DI+** : mesure la force des mouvements haussiers (hausses > baisses et > 0)
+- **DI-** : mesure la force des mouvements baissiers (baisses > hausses et > 0)
+
+Interprétation :
+- `DI+ > DI-` → pression acheteuse dominante (signal haussier)
+- `DI- > DI+` → pression vendeuse dominante (signal baissier)
+
+**Utilisation dans le bot :** la stratégie `adx_ema_trend` exige que le DI dominant
+soit cohérent avec la direction du croisement EMA pour valider le signal.
 
 ### Day Trade (trade intraday)
 Trade ouvert **et** fermé dans la même session de marché (même journée de
@@ -250,6 +299,25 @@ plus lent de la stratégie (ex : MA200 nécessite lookback ≥ 200).
 ---
 
 ## M
+
+### MACD — Moving Average Convergence Divergence
+Indicateur de momentum et de tendance créé par Gerald Appel (1979). Il est composé
+de trois éléments :
+
+| Élément | Calcul | Rôle |
+|---------|--------|------|
+| **Ligne MACD** | EMA(12) − EMA(26) | Direction et momentum |
+| **Ligne signal** | EMA(9) de la ligne MACD | Lissage pour les croisements |
+| **Histogramme** | MACD − Signal | Intensité de la divergence |
+
+Interprétation :
+- MACD **au-dessus** de 0 : momentum haussier (EMA12 > EMA26)
+- MACD **croise au-dessus** de la ligne signal → **signal BUY** (bullish crossover)
+- MACD **croise en dessous** de la ligne signal → **signal SELL** (bearish crossover)
+- Histogramme **positif et croissant** : accélération haussière
+
+**Utilisation dans le bot :** la stratégie `macd_crossover` trade les croisements
+MACD/signal avec un filtre `min_histogram` pour ignorer les croisements faibles.
 
 ### Market Order (ordre au marché)
 Ordre exécuté **immédiatement** au meilleur prix disponible. Garanti d'être

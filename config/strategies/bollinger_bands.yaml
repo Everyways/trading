@@ -1,0 +1,37 @@
+name: bollinger_bands
+version: "1.0.0"
+enabled: true
+mode: paper
+provider: alpaca
+
+# Best on range-bound liquid ETFs (same universe as RSI mean reversion)
+universe:
+  - symbol: SPY
+    asset_class: equity
+  - symbol: QQQ
+    asset_class: equity
+  - symbol: IWM
+    asset_class: equity
+
+timeframe: 15m
+lookback: 60      # 20 for BB + 14 for RSI + buffer
+
+params:
+  bb_period: 20         # Bollinger Band lookback (standard = 20)
+  bb_std: 2.0           # Number of standard deviations for the bands
+  rsi_period: 14        # RSI confirmation period
+  rsi_confirm: 45.0     # RSI must be below this to trigger entry (≤45 = weak)
+  stop_loss_pct: 2.0    # Stop-loss in % below entry price
+  take_profit_pct: 3.0  # Take-profit in % above entry (bracket order)
+
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_concurrent_positions: 2
+  max_daily_loss_pct: 2.0
+  max_drawdown_pct: 8.0
+  max_exposure_pct: 20.0
+  max_orders_per_minute: 5
+
+execution:
+  order_type: market
+  time_in_force: day

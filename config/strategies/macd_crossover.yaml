@@ -1,0 +1,39 @@
+name: macd_crossover
+version: "1.0.0"
+enabled: true
+mode: paper
+provider: alpaca
+
+# Trending tech stocks + broad market — MACD works well on directional assets
+universe:
+  - symbol: QQQ
+    asset_class: equity
+  - symbol: AAPL
+    asset_class: equity
+  - symbol: MSFT
+    asset_class: equity
+  - symbol: SPY
+    asset_class: equity
+
+timeframe: 15m
+lookback: 150     # 26 (slow EMA) + 9 (signal EMA) + comfortable buffer
+
+params:
+  fast: 12              # Fast EMA period (standard MACD default)
+  slow: 26              # Slow EMA period (standard MACD default)
+  signal_period: 9      # Signal line EMA period (standard MACD default)
+  min_histogram: 0.0    # Min absolute histogram to confirm crossover (0 = all)
+  stop_loss_pct: 2.0    # Stop-loss in % below entry
+  take_profit_pct: 4.0  # Take-profit in % above entry (bracket order)
+
+risk:
+  max_risk_per_trade_pct: 1.0
+  max_concurrent_positions: 2
+  max_daily_loss_pct: 2.0
+  max_drawdown_pct: 8.0
+  max_exposure_pct: 20.0
+  max_orders_per_minute: 5
+
+execution:
+  order_type: market
+  time_in_force: day

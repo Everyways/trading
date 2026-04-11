@@ -114,6 +114,20 @@ broker. C'est ce qui alimente le dashboard.
 
 ## 3. Les stratégies disponibles
 
+Six stratégies sont disponibles — trois historiques et trois nouvelles.
+Elles peuvent toutes tourner simultanément (univers partiellement différents).
+
+| Stratégie | Approche | Marchés idéaux | Timeframe |
+|-----------|----------|----------------|-----------|
+| `rsi_mean_reversion` | Oscillateur | Range, ETF liquides | 15m |
+| `ma_crossover` | Tendance EMA | Directionnel, tech | 15m |
+| `breakout` | Momentum + volume | Volatil, crypto/tech | 15m |
+| `bollinger_bands` | Mean reversion BB | Range, ETF liquides | 15m |
+| `macd_crossover` | Tendance MACD | Directionnel, tech | 15m |
+| `adx_ema_trend` | Tendance filtrée ADX | Tendance forte uniquement | 15m |
+
+---
+
 ### RSI Mean Reversion (`rsi_mean_reversion`)
 
 **Logique :** Acheter quand le RSI(14) passe sous 30 (zone de survente) et que
@@ -186,6 +200,117 @@ empêche de rentrer plusieurs fois de suite après un signal.
 **Univers :** Cette stratégie cible des actifs volatils (crypto ou actions
 tech). Elle essaie d'abord BTC/USD et ETH/USD ; si Alpaca ne supporte pas la
 crypto sur votre compte, elle bascule automatiquement sur TSLA/NVDA/COIN.
+
+---
+
+### Bollinger Bands Mean Reversion (`bollinger_bands`)
+
+**Logique :** Les bandes de Bollinger définissent une zone statistique "normale"
+autour d'une MA20 (±2 écarts-types). Quand le prix clôture **sous** la bande
+inférieure ET que le RSI confirme la faiblesse (RSI < 45), la stratégie achète
+en anticipant un retour à la moyenne. Elle vend quand le prix remonte au-dessus
+de la bande médiane (MA20) — la mean reversion est complète.
+
+```
+Bande sup ─────────────────────────────────────────────────────
+MA 20     ─────────────── (objectif de sortie) ────────────────
+Bande inf ────────────────────  ← BUY ici (clôture < bande inf
+                                    + RSI < 45)
+```
+
+**Complémentaire avec RSI Mean Reversion :** les deux partagent le même univers
+(SPY/QQQ/IWM) mais ont des conditions d'entrée différentes — les BB réagissent
+à la volatilité relative, le RSI à l'amplitude du mouvement.
+
+**Paramètres clés :**
+
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `bb_period` | 20 | Fenêtre de calcul des bandes (MA + écart-type) |
+| `bb_std` | 2.0 | Multiplicateur d'écarts-types (2.0 = ~95% des prix) |
+| `rsi_period` | 14 | Période du RSI de confirmation |
+| `rsi_confirm` | 45.0 | RSI doit être < ce seuil pour valider l'entrée |
+| `stop_loss_pct` | 2.0 | Stop-loss en % sous le prix d'entrée |
+| `take_profit_pct` | 3.0 | Take-profit en % (bracket order) |
+
+**Quand ça marche bien :** marchés en range sur ETF liquides avec oscillations
+régulières autour de la moyenne.
+
+**Quand ça performe mal :** tendances fortes — le prix peut rester sous la bande
+inférieure longtemps ("walking the band").
+
+---
+
+### MACD Crossover (`macd_crossover`)
+
+**Logique :** Le MACD (Moving Average Convergence Divergence) est la différence
+entre l'EMA12 et l'EMA26 du prix. Sa "ligne signal" est une EMA9 du MACD lui-même.
+Quand le MACD croise **au-dessus** de sa ligne signal → BUY ; en dessous → SELL.
+
+Avantage sur le simple croisement EMA : le MACD filtre les oscillations courtes
+et détecte les changements de momentum avant que les moyennes mobiles elles-mêmes
+ne se croisent. Le `min_histogram` évite les faux signaux sur des croisements
+très faibles (quasi-tangents).
+
+```
+  MACD line ────╮
+                ╰──────────── (crossover → BUY)
+  Signal line ──────────────────────────────────
+  Histogram  ▁▂▃▄▅  (positif = momentum haussier)
+```
+
+**Paramètres clés :**
+
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `fast` | 12 | EMA rapide (standard MACD) |
+| `slow` | 26 | EMA lente (standard MACD) |
+| `signal_period` | 9 | EMA de la ligne signal (standard MACD) |
+| `min_histogram` | 0.0 | Seuil minimum de l'histogramme (0 = tous les croisements) |
+| `stop_loss_pct` | 2.0 | Stop-loss en % |
+| `take_profit_pct` | 4.0 | Take-profit en % (bracket order) |
+
+**Quand ça marche bien :** marchés directionnels, tendances de fond confirmées.
+
+**Quand ça performe mal :** marchés très volatils avec retournements rapides
+(le MACD lag persiste car il est basé sur des EMA).
+
+---
+
+### ADX + EMA Trend (`adx_ema_trend`)
+
+**Logique :** L'ADX (Average Directional Index) mesure la **force** d'une
+tendance indépendamment de sa direction. Quand ADX < 20 le marché est en range ;
+quand ADX > 25 une tendance directionnelle est établie.
+
+Cette stratégie ne génère de signaux **que quand ADX ≥ threshold** — éliminant
+ainsi la principale faiblesse de MA Crossover (les faux croisements en range).
+Les lignes directionnelles DI+ et DI- confirment le sens de la tendance.
+
+```
+ADX > 25 → tendance forte, signaux actifs
+   EMA20 > EMA50 et DI+ > DI- → BUY (tendance haussière confirmée)
+   EMA20 < EMA50 et DI- > DI+ → SELL (tendance baissière confirmée)
+
+ADX < 25 → range, aucun signal émis
+```
+
+**Paramètres clés :**
+
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `ema_fast` | 20 | EMA courte pour la direction |
+| `ema_slow` | 50 | EMA longue pour la direction |
+| `adx_period` | 14 | Période du lissage ADX/DI (Wilder = 14) |
+| `adx_threshold` | 25.0 | ADX minimum pour générer des signaux |
+| `stop_loss_pct` | 2.0 | Stop-loss en % |
+| `take_profit_pct` | 5.0 | Take-profit en % (bracket order) |
+
+**Quand ça marche bien :** marchés avec des tendances nettes et durables.
+Produit moins de trades que MA Crossover mais avec un meilleur ratio signal/bruit.
+
+**Quand ça performe mal :** marchés en range persistant (ADX reste bas — pas de
+signal du tout, ce qui est en soi une protection).
 
 ---
 
