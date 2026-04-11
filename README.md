@@ -1,17 +1,64 @@
-# Trading Stack
+# Trading Bot
 
-Ce repo contient deux projets indépendants qui tournent côte à côte sur le même Raspberry Pi :
+Bot de trading automatisé pour Raspberry Pi — strategies RSI, MA Crossover, Breakout via Alpaca, avec risk management, dashboard web, backtest et notifications Telegram.
 
-| Projet | Rôle | README |
-|--------|------|--------|
-| **trading-bot** (racine) | Bot de trading automatisé — RSI, MA Crossover, Breakout via Alpaca, dashboards, risk management | ce fichier |
-| **trading-routines/** | Veille automatisée — briefings hebdo/mensuel/trimestriel via Claude + web_search, notifs Telegram | [trading-routines/README.md](trading-routines/README.md) |
-
-Les deux services sont **totalement indépendants** : pas de code partagé, pas de DB partagée. Ils partagent uniquement le canal Telegram (même token, préfixes différents : `[GLOBAL]`/`[STRAT:xxx]` pour le bot, `[TRADING-ROUTINES]` pour les routines).
+> Ce repo contient deux projets indépendants :
+> | Projet | Rôle |
+> |--------|------|
+> | **trading-bot** (racine) | Bot de trading — ce fichier |
+> | **trading-routines/** | Veille automatisée — briefings via Claude + Telegram |
 
 ---
 
-## Prérequis matériel (Raspberry Pi — cible recommandée)
+## Table des matières
+
+1. [Obtenir les clés API](#1-obtenir-les-clés-api)
+2. [Prérequis matériel](#2-prérequis-matériel)
+3. [Installation sur Raspberry Pi](#3-installation-sur-raspberry-pi)
+4. [Configuration](#4-configuration)
+5. [Utilisation](#5-utilisation)
+6. [Dashboard web](#6-dashboard-web)
+7. [Backtest](#7-backtest)
+8. [Production avec Docker](#8-production-avec-docker)
+9. [Passer en live](#9-passer-en-live)
+10. [Kill switch d'urgence](#10-kill-switch-durgence)
+11. [Développement local](#11-développement-local)
+12. [Règles non-négociables](#12-règles-non-négociables)
+
+---
+
+## 1. Obtenir les clés API
+
+### Alpaca (broker — obligatoire)
+
+1. Créer un compte sur **[alpaca.markets](https://alpaca.markets)**
+2. Aller dans **Paper Trading** → **Overview** → **API Keys** → **Generate New Key**
+3. Copier **Key ID** (`ALPACA_API_KEY`) et **Secret Key** (`ALPACA_API_SECRET`)
+   > La Secret Key n'est affichée qu'une seule fois — la copier immédiatement.
+4. L'URL paper trading est `https://paper-api.alpaca.markets` (déjà pré-renseignée)
+
+Pour le live trading (plus tard) : aller dans **Live Trading** → **API Keys** et changer `ALPACA_BASE_URL`.
+
+### Telegram (notifications — recommandé pour Raspberry Pi headless)
+
+**Créer le bot :**
+1. Ouvrir Telegram → chercher **@BotFather** → `/newbot`
+2. Choisir un nom (ex: `MonTradingBot`) et un username (ex: `mon_trading_bot`)
+3. Copier le **token** affiché → `TELEGRAM_BOT_TOKEN`
+
+**Obtenir votre Chat ID :**
+1. Chercher **@userinfobot** dans Telegram → `/start`
+2. Copier l'**Id** affiché → `TELEGRAM_CHAT_ID_GLOBAL`
+3. Envoyer un message à votre bot (sinon il ne peut pas vous contacter)
+
+### Anthropic (trading-routines uniquement — optionnel)
+
+1. Créer un compte sur **[console.anthropic.com](https://console.anthropic.com)**
+2. **API Keys** → **Create Key** → copier → `ANTHROPIC_API_KEY` dans `trading-routines/.env`
+
+---
+
+## 2. Prérequis matériel
 
 | Composant | Minimum | Recommandé |
 |-----------|---------|------------|
@@ -21,191 +68,213 @@ Les deux services sont **totalement indépendants** : pas de code partagé, pas 
 | Réseau | Wifi | **Ethernet filaire** |
 | OS | Raspberry Pi OS Lite 64-bit | Ubuntu Server 24.04 arm64 |
 
-> ⚠️ **Ne pas utiliser de carte SD pour PostgreSQL** — elle mourra en quelques semaines. SSD USB3 obligatoire.
+> **Ne pas utiliser de carte SD pour la base de données** — elle mourra en quelques semaines sous les writes. SSD USB3 obligatoire en production.
 
-> ⚠️ **Le live trading sur laptop est refusé par défaut** (le bot refuse de démarrer). Le Raspberry Pi est la seule cible recommandée pour le live.
+> **Le live trading sur laptop est bloqué par défaut.** Seul le Raspberry Pi (ou un serveur) est la cible recommandée.
 
 ---
 
-## Installation sur Raspberry Pi
+## 3. Installation sur Raspberry Pi
 
-### 1. Préparer le Raspberry Pi
+### 3.1 Préparer le système
 
 ```bash
-# Mettre à jour le système
 sudo apt update && sudo apt upgrade -y
-
-# Installer Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Vérifier
-docker --version
-docker compose version
+sudo apt install -y python3.12 python3.12-venv python3-pip git curl
 ```
 
-### 2. Connecter et monter le SSD
+### 3.2 Cloner le projet
 
 ```bash
-# Identifier le SSD (chercher /dev/sda ou /dev/sdb)
+git clone <url-du-repo> /home/pi/trading
+cd /home/pi/trading
+```
+
+### 3.3 Créer l'environnement Python
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+# Installer les dépendances
+pip install -e ".[dev]"
+```
+
+> Ajouter `source /home/pi/trading/.venv/bin/activate` à votre `~/.bashrc` pour ne pas avoir à le refaire.
+
+### 3.4 Monter le SSD (si applicable)
+
+```bash
+# Identifier le SSD
 lsblk
 
-# Formater si neuf (⚠️ efface tout)
+# Formater si neuf (efface tout)
 sudo mkfs.ext4 /dev/sda1
 
-# Créer le point de montage et monter
+# Monter
 sudo mkdir -p /var/lib/trading-bot
 sudo mount /dev/sda1 /var/lib/trading-bot
 
 # Montage automatique au boot
 echo '/dev/sda1 /var/lib/trading-bot ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+
+# Créer les dossiers de données
+mkdir -p /var/lib/trading-bot/data
 ```
 
-### 3. Cloner le projet
+---
+
+## 4. Configuration
+
+### 4.1 Créer le fichier .env
 
 ```bash
-git clone <url-du-repo> /home/pi/trading-bot
-cd /home/pi/trading-bot
+cp .env.example .env
+nano .env   # ou vim, ou votre éditeur préféré
 ```
 
-### 4. Configurer l'environnement
+### 4.2 Renseigner les valeurs
 
 ```bash
-# Créer le dossier de config sécurisé
-sudo mkdir -p /etc/trading-bot
-sudo chmod 700 /etc/trading-bot
+# ── Base de données ─────────────────────────────────────────────────
+# Mode paper/dev : SQLite (simple, aucune installation)
+DATABASE_URL=sqlite+aiosqlite:///./data/paper.db
+DATABASE_URL_SYNC=sqlite:///./data/paper.db
 
-# Copier et éditer la config
-sudo cp .env.example /etc/trading-bot/trading.env
-sudo nano /etc/trading-bot/trading.env
-```
+# Mode production : PostgreSQL (voir section 8)
+# DATABASE_URL=postgresql+asyncpg://trading:MOT_DE_PASSE@localhost:5432/trading
+# DATABASE_URL_SYNC=postgresql+psycopg2://trading:MOT_DE_PASSE@localhost:5432/trading
 
-Créer aussi le fichier de config des routines :
+# ── Sécurité ────────────────────────────────────────────────────────
+# Générer une clé : python -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=remplacer-par-une-chaine-aleatoire-de-32-caracteres-minimum
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=votre-mot-de-passe-dashboard
 
-```bash
-sudo cp trading-routines/.env.example /etc/trading-bot/routines.env
-sudo nano /etc/trading-bot/routines.env
-# Renseigner : ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-```
-
-Valeurs minimales à renseigner dans `/etc/trading-bot/trading.env` :
-
-```bash
-# Clés Alpaca (paper pour commencer)
+# ── Alpaca ──────────────────────────────────────────────────────────
 ALPACA_API_KEY=PKxxxxxxxxxxxxxxxx
 ALPACA_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 
-# Base de données (adaptée au compose prod)
-DATABASE_URL=postgresql+asyncpg://trading:MOT_DE_PASSE_ICI@db:5432/trading
-DATABASE_URL_SYNC=postgresql+psycopg2://trading:MOT_DE_PASSE_ICI@db:5432/trading
+# ── Telegram (optionnel) ─────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN=123456789:ABCdef...
+TELEGRAM_CHAT_ID_GLOBAL=987654321
 
-# Sécurité dashboard
-SECRET_KEY=chaine-aleatoire-de-32-caracteres-minimum
-DASHBOARD_USER=admin
-DASHBOARD_PASSWORD=votre-mot-de-passe-dashboard
-DB_PASSWORD=MOT_DE_PASSE_ICI
-
-# Telegram (optionnel mais recommandé)
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID_GLOBAL=
+# ── Environnement ────────────────────────────────────────────────────
+ENVIRONMENT=development
+DATA_DIR=./data
+CONFIG_DIR=./config
 ```
 
-### 5. Créer les dossiers de données
+### 4.3 Initialiser la base de données
 
 ```bash
-# Données du bot
-sudo mkdir -p /var/lib/trading-bot/{postgres,data,reports}
-sudo chown -R 1000:1000 /var/lib/trading-bot/data /var/lib/trading-bot/reports
-sudo chown -R 999:999 /var/lib/trading-bot/postgres   # uid postgres dans Docker
+# SQLite (paper trading, développement)
+python scripts/init_db.py --url sqlite:///./data/paper.db
 
-# Rapports des routines (service indépendant, uid 1001 dans son image)
-sudo mkdir -p /var/lib/trading-routines/reports
-sudo chown -R 1001:1001 /var/lib/trading-routines/reports
+# PostgreSQL (production)
+python scripts/init_db.py
+# ou : alembic upgrade head
 ```
 
-### 6. Lancer les services
+### 4.4 Remplir les données historiques (recommandé)
 
 ```bash
-cd /home/pi/trading
-
-# Premier démarrage — construit les images et lance les 3 services (db + bot + routines)
-DB_PASSWORD=MOT_DE_PASSE_ICI docker compose -f docker-compose.prod.yml up -d
-
-# Vérifier que la DB est prête
-docker compose -f docker-compose.prod.yml logs db | tail -5
-
-# Appliquer les migrations du bot
-docker compose -f docker-compose.prod.yml exec bot alembic upgrade head
-
-# Vérifier les logs
-docker compose -f docker-compose.prod.yml logs bot -f
-docker compose -f docker-compose.prod.yml logs trading-routines -f
-
-# Test manuel d'une routine (optionnel)
-docker compose -f docker-compose.prod.yml run --rm trading-routines \
-  python trading_routines.py run weekly
-```
-
-### 7. Remplir les données historiques
-
-```bash
-# Backfill 2 ans de données 15m pour toutes les stratégies
-docker compose -f docker-compose.prod.yml exec bot \
-  python scripts/backfill_data.py \
+# 2 ans de bars 15m pour les symboles des stratégies actives
+python scripts/backfill_data.py \
   --provider alpaca \
-  --symbols SPY,QQQ,IWM,AAPL,MSFT,TSLA,NVDA,COIN \
-  --timeframe 15m --years 2
+  --symbols SPY,QQQ,IWM \
+  --timeframe 15m \
+  --years 2
 ```
 
-### 8. Configurer le service systemd (démarrage automatique)
+---
 
-Le service gère les **deux projets** ensemble (bot + routines) :
+## 5. Utilisation
+
+### 5.1 Lancer le paper trading
 
 ```bash
-sudo tee /etc/systemd/system/trading-stack.service << 'EOF'
+# Mode continu (tourne indéfiniment, tick toutes les 15 minutes)
+python scripts/run_paper.py
+
+# Un seul tick puis quitte (test de configuration)
+python scripts/run_paper.py --once
+
+# Une seule stratégie
+python scripts/run_paper.py --strategy rsi_mean_reversion
+
+# Config alternatives
+python scripts/run_paper.py --config-dir config/strategies --risk-config config/risk_global.yaml
+```
+
+Le runner :
+- Vérifie les heures de marché (ne tourne pas si marché fermé)
+- Évalue chaque paire stratégie/symbole à chaque bar 15m
+- Gate chaque signal à travers le RiskManager (8 niveaux)
+- Soumet les ordres paper à Alpaca
+- Envoie les alertes Telegram (si configuré)
+
+### 5.2 Activer le service au démarrage (systemd)
+
+```bash
+sudo tee /etc/systemd/system/trading-bot.service << 'EOF'
 [Unit]
-Description=Trading Stack (bot + routines)
-Requires=docker.service
-After=docker.service network-online.target
+Description=Trading Bot — paper trading
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
+User=pi
 WorkingDirectory=/home/pi/trading
-Environment=DB_PASSWORD=MOT_DE_PASSE_ICI
-ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d
-ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+ExecStart=/home/pi/trading/.venv/bin/python scripts/run_paper.py
 Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable trading-stack.service
-sudo systemctl start trading-stack.service
+sudo systemctl enable trading-bot.service
+sudo systemctl start trading-bot.service
 
 # Vérifier
-sudo systemctl status trading-stack.service
+sudo systemctl status trading-bot.service
+journalctl -u trading-bot.service -f
 ```
 
 ---
 
-## Accès au dashboard
+## 6. Dashboard web
 
-### Sur le réseau local (LAN)
-
+```bash
+# Démarrer le dashboard
+python scripts/run_dashboard.py                    # http://0.0.0.0:8080
+python scripts/run_dashboard.py --port 8090        # port alternatif
+python scripts/run_dashboard.py --host 127.0.0.1  # localhost uniquement
 ```
-http://<ip-du-raspy>:8000
-```
 
-Trouver l'IP du Raspberry Pi : `hostname -I`
+Accéder via navigateur : `http://<ip-du-raspy>:8080`
 
-### Depuis n'importe où (Tailscale — recommandé)
+Identifiants : `DASHBOARD_USER` / `DASHBOARD_PASSWORD` depuis `.env`
 
-Tailscale crée un VPN chiffré entre vos appareils, sans exposition publique.
+**Ce qu'affiche le dashboard :**
+- Statut du kill switch (alerte rouge si engagé)
+- PnL du jour, perte mensuelle €, positions ouvertes, stratégies actives
+- Tableau des positions ouvertes avec PnL non réalisé
+- Tableau des stratégies (enabled/disabled, paper/live)
+- Historique des 30 derniers trades
+- Historique des 20 derniers ordres
+- Derniers events de risque
+- Auto-refresh toutes les 30 secondes
+
+**API JSON :** `GET http://<ip>:8080/api/status` — utile pour Uptime Kuma ou scripts de monitoring.
+
+### Accès depuis n'importe où (Tailscale — recommandé)
 
 ```bash
 # Sur le Raspberry Pi
@@ -216,170 +285,337 @@ sudo tailscale up
 tailscale ip -4
 ```
 
-Le dashboard devient accessible depuis votre téléphone ou ordinateur via `http://<ip-tailscale>:8000`, chiffré de bout en bout.
+Dashboard accessible depuis votre téléphone : `http://<ip-tailscale>:8080`
 
----
-
-## Mise à jour
+### Service systemd pour le dashboard
 
 ```bash
-cd /home/pi/trading
-git pull origin main
+sudo tee /etc/systemd/system/trading-dashboard.service << 'EOF'
+[Unit]
+Description=Trading Bot — Dashboard
+After=network-online.target
 
-# Rebuild et redémarrage (les deux services)
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/trading
+ExecStart=/home/pi/trading/.venv/bin/python scripts/run_dashboard.py
+Restart=on-failure
+RestartSec=10
 
-# Appliquer les nouvelles migrations si besoin
-docker compose -f docker-compose.prod.yml exec bot alembic upgrade head
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable trading-dashboard.service
+sudo systemctl start trading-dashboard.service
 ```
 
 ---
 
-## Commandes courantes
+## 7. Backtest
 
 ```bash
-# Logs de tous les services
-docker compose -f docker-compose.prod.yml logs -f
+# Backtest d'une stratégie sur une période historique
+python scripts/run_backtest.py \
+  --strategy rsi_mean_reversion \
+  --symbol SPY \
+  --start 2024-01-01 \
+  --end   2024-12-31
 
-# Logs par service
+# Avec equity de départ personnalisée
+python scripts/run_backtest.py \
+  --strategy ma_crossover \
+  --symbol QQQ \
+  --start 2023-01-01 \
+  --end   2024-12-31 \
+  --equity 5000
+
+# Exporter les trades en CSV
+python scripts/run_backtest.py \
+  --strategy breakout \
+  --symbol IWM \
+  --start 2024-01-01 \
+  --end   2024-12-31 \
+  --output results/backtest_breakout_iwm.csv
+```
+
+**Résultat affiché :**
+```
+Trades: 47  Win rate: 55.3%  Net PnL: $312.40  Return: 3.12%  Max DD: -4.21%  Sharpe: 1.43  PF: 1.62
+```
+
+### Modifier les paramètres d'une stratégie
+
+Éditer `config/strategies/<nom>.yaml` :
+
+```yaml
+params:
+  rsi_period: 14      # période RSI
+  oversold: 30        # seuil de survente (entrée)
+  overbought: 70      # seuil de surachat (sortie)
+  stop_loss_pct: 2.0  # stop-loss en %
+  take_profit_pct: 4.0
+  max_holding_bars: 96  # 96 × 15m = 24h max
+```
+
+---
+
+## 8. Production avec Docker
+
+Pour un déploiement robuste (PostgreSQL + redémarrage automatique) :
+
+### 8.1 Installer Docker
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 8.2 Préparer les secrets
+
+```bash
+# Dossier sécurisé pour les secrets
+sudo mkdir -p /etc/trading-bot
+sudo chmod 700 /etc/trading-bot
+sudo cp .env.example /etc/trading-bot/trading.env
+sudo nano /etc/trading-bot/trading.env
+# → renseigner les valeurs avec DATABASE_URL postgresql://...
+```
+
+### 8.3 Préparer les volumes
+
+```bash
+sudo mkdir -p /var/lib/trading-bot/{postgres,data,reports}
+sudo chown -R 1000:1000 /var/lib/trading-bot/data /var/lib/trading-bot/reports
+sudo chown -R 999:999 /var/lib/trading-bot/postgres
+```
+
+### 8.4 Lancer la stack
+
+```bash
+cd /home/pi/trading
+
+# Démarrer (build + launch)
+DB_PASSWORD=MOT_DE_PASSE_ICI docker compose -f docker-compose.prod.yml up -d
+
+# Initialiser la base de données
+docker compose -f docker-compose.prod.yml exec bot \
+  python scripts/init_db.py
+
+# Vérifier les logs
 docker compose -f docker-compose.prod.yml logs bot -f
-docker compose -f docker-compose.prod.yml logs trading-routines -f
+docker compose -f docker-compose.prod.yml logs db -f
+```
 
-# Logs d'une stratégie spécifique
-docker compose -f docker-compose.prod.yml logs bot -f | grep rsi_mean_reversion
+### 8.5 Commandes courantes (Docker)
 
-# Statut des services
+```bash
+# Statut des conteneurs
 docker compose -f docker-compose.prod.yml ps
 
-# Redémarrer un service sans toucher les autres
+# Logs d'un service
+docker compose -f docker-compose.prod.yml logs bot -f
+docker compose -f docker-compose.prod.yml logs bot -f | grep rsi_mean_reversion
+
+# Redémarrer le bot sans toucher la DB
 docker compose -f docker-compose.prod.yml restart bot
-docker compose -f docker-compose.prod.yml restart trading-routines
+
+# Shell dans le conteneur
+docker compose -f docker-compose.prod.yml exec bot bash
 
 # Arrêt propre
 docker compose -f docker-compose.prod.yml down
 
-# Shell dans un conteneur
-docker compose -f docker-compose.prod.yml exec bot bash
-docker compose -f docker-compose.prod.yml exec trading-routines sh
-
-# Déclencher une routine manuellement
-docker compose -f docker-compose.prod.yml run --rm trading-routines \
-  python trading_routines.py run weekly
+# Mise à jour (pull + rebuild)
+git pull origin main
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
 ```
 
----
-
-## Kill switches (urgence)
+### 8.6 Backup de la base de données
 
 ```bash
-# Couper TOUTES les stratégies (kill global)
-docker compose -f docker-compose.prod.yml exec bot \
-  python scripts/killswitch.py --scope global --engage --reason "intervention manuelle"
-
-# Couper UNE stratégie
-docker compose -f docker-compose.prod.yml exec bot \
-  python scripts/killswitch.py --scope strategy --name rsi_mean_reversion --engage
-
-# Relâcher (le bot reprend)
-docker compose -f docker-compose.prod.yml exec bot \
-  python scripts/killswitch.py --scope global --release
-```
-
-> ⚠️ Le kill switch **ne liquide pas** les positions ouvertes. Il stoppe uniquement les nouveaux ordres. Gérer manuellement via l'app Alpaca si besoin.
-
----
-
-## Backups
-
-```bash
-# Backup manuel de la DB
+# Backup manuel
 docker compose -f docker-compose.prod.yml exec db \
   pg_dump -U trading trading | gzip > /var/lib/trading-bot/backup_$(date +%Y%m%d).sql.gz
 
-# Planifier un backup automatique quotidien (cron)
+# Backup quotidien automatique (cron)
 (crontab -l 2>/dev/null; echo "0 3 * * * docker compose -f /home/pi/trading/docker-compose.prod.yml exec -T db pg_dump -U trading trading | gzip > /var/lib/trading-bot/backup_\$(date +\%Y\%m\%d).sql.gz") | crontab -
 ```
 
 ---
 
-## Passage en live (par stratégie)
+## 9. Passer en live
 
-> **Lire §12 de la spec avant toute chose.** Le live ne s'active jamais d'un coup sur les 3 stratégies.
+> Lire attentivement toutes les règles de la section 12 avant de procéder.
 
-1. Vérifier que la gate est passée pour la stratégie :
-   ```bash
-   docker compose -f docker-compose.prod.yml exec bot \
-     python scripts/check_gate.py --strategy rsi_mean_reversion
-   ```
+**Étape 1 — Vérifier que le paper trading est stable**
 
-2. Éditer `config/strategies/rsi_mean_reversion.yaml` : changer `mode: paper` → `mode: live`
+Une stratégie doit avoir au moins 30 jours de paper trading sans anomalie avant de passer en live.
 
-3. Commiter le changement :
-   ```bash
-   git add config/strategies/rsi_mean_reversion.yaml
-   git commit -m "rsi_mean_reversion: switch to live"
-   git push
-   ```
+**Étape 2 — Modifier le YAML de la stratégie**
 
-4. Définir la variable d'approbation et redémarrer :
-   ```bash
-   echo 'TRADING_BOT_LIVE_APPROVAL_RSI_MEAN_REVERSION=yes' | sudo tee -a /etc/trading-bot/trading.env
-   docker compose -f docker-compose.prod.yml restart bot
-   ```
+```yaml
+# config/strategies/rsi_mean_reversion.yaml
+mode: live   # était: paper
+```
 
----
+**Étape 3 — Changer les clés Alpaca**
 
-## 12 règles non-négociables
+Dans `.env` :
+```bash
+ALPACA_API_KEY=votre-cle-live
+ALPACA_API_SECRET=votre-secret-live
+ALPACA_BASE_URL=https://api.alpaca.markets
+```
 
-1. **Isolation broker** : aucun code métier ne connaît Alpaca directement
-2. **Idempotence** : `client_order_id` généré avant tout appel broker
-3. **Source de vérité positions** : le broker, jamais la DB locale
-4. **Pas de liquidation automatique** sur kill switch
-5. **Stop-loss côté broker** en live (bracket orders) pour survivre aux crashs Raspberry Pi
-6. **Gate paper→live par stratégie** — bypass explicitement loggué
-7. **Hard stop mensuel 50 €** non-relâchable avant le 1er du mois suivant
-8. **Live interdit sur laptop** sauf `ALLOW_LIVE_ON_LAPTOP=true` explicite
-9. **PDT compliance obligatoire** en live (overnight hold forcé)
-10. **Déploiement live progressif** : 1 stratégie à la fois, jamais 3 simultanément
-11. **`Decimal` pour tout ce qui touche à l'argent** — jamais `float`
-12. **Pas de `print`, `float`, `time.sleep` async** en production
-
----
-
-## Ajouter un broker (contrat)
-
-1. Créer `app/providers/<nom>/provider.py` avec `@broker_registry.register("<nom>")`
-2. Créer `app/providers/<nom>/config.py` avec les settings
-3. L'importer dans `app/providers/__init__.py`
-4. Référencer `provider: <nom>` dans un YAML de stratégie
-
-**Aucun autre fichier n'est modifié.** Voir `tests/fixtures/dummy_provider/` pour un exemple minimal.
-
-## Ajouter une stratégie
-
-1. Créer `app/strategies/<nom>.py` avec `@strategy_registry.register("<nom>")`
-2. Créer `config/strategies/<nom>.yaml`
-3. L'importer dans `app/strategies/__init__.py`
-
----
-
-## Développement local
+**Étape 4 — Définir la variable d'approbation**
 
 ```bash
-# Lancer uniquement la DB (paper + backtest uniquement)
-docker compose -f docker/docker-compose.yml up -d db
+# Dans .env — une variable par stratégie live
+TRADING_BOT_LIVE_APPROVAL_RSI_MEAN_REVERSION=yes
+```
 
-# Installer les dépendances Python
+**Étape 5 — Redémarrer**
+
+```bash
+sudo systemctl restart trading-bot.service
+# ou Docker :
+docker compose -f docker-compose.prod.yml restart bot
+```
+
+> **Le kill switch ne liquide pas les positions ouvertes.** Si besoin de clôturer d'urgence, utiliser directement l'app Alpaca.
+
+---
+
+## 10. Kill switch d'urgence
+
+Le kill switch stoppe tous les nouveaux ordres immédiatement (sans liquider les positions existantes).
+
+### Via la base de données (SQLite)
+
+```bash
+# Engager le kill switch global
+python - << 'EOF'
+from app.data.database import get_session
+from app.data.models import KillSwitch
+from datetime import UTC, datetime
+from sqlmodel import select
+
+with get_session() as session:
+    ks = session.exec(select(KillSwitch).where(KillSwitch.scope == "global")).first()
+    if ks:
+        ks.engaged = True
+        ks.engaged_at = datetime.now(tz=UTC)
+        ks.engaged_by = "operator"
+        ks.reason = "intervention manuelle"
+        session.add(ks)
+    else:
+        session.add(KillSwitch(
+            scope="global", engaged=True,
+            engaged_at=datetime.now(tz=UTC),
+            engaged_by="operator", reason="intervention manuelle",
+        ))
+    session.commit()
+    print("Kill switch engagé.")
+EOF
+
+# Redémarrer le bot pour que le changement soit pris en compte
+sudo systemctl restart trading-bot.service
+```
+
+```bash
+# Relâcher le kill switch
+python - << 'EOF'
+from app.data.database import get_session
+from app.data.models import KillSwitch
+from sqlmodel import select
+
+with get_session() as session:
+    ks = session.exec(select(KillSwitch).where(KillSwitch.scope == "global")).first()
+    if ks:
+        ks.engaged = False
+        session.add(ks)
+        session.commit()
+        print("Kill switch relâché.")
+EOF
+```
+
+### Via Docker (PostgreSQL)
+
+```bash
+# Engager
+docker compose -f docker-compose.prod.yml exec db \
+  psql -U trading -c "UPDATE kill_switches SET engaged=true, engaged_by='operator', reason='intervention manuelle' WHERE scope='global';"
+
+# Relâcher
+docker compose -f docker-compose.prod.yml exec db \
+  psql -U trading -c "UPDATE kill_switches SET engaged=false WHERE scope='global';"
+
+# Redémarrer le bot
+docker compose -f docker-compose.prod.yml restart bot
+```
+
+---
+
+## 11. Développement local
+
+```bash
+# Cloner et installer
+git clone <url> trading && cd trading
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Migrations
-alembic upgrade head
+# Configurer (SQLite pour le dev)
+cp .env.example .env
+# Éditer .env → DATABASE_URL_SYNC=sqlite:///./data/dev.db
+python scripts/init_db.py --url sqlite:///./data/dev.db
 
 # Tests
 pytest tests/unit/ -v
+pytest tests/unit/ -q --tb=short --cov=app
 
-# Linter + types
-ruff check app/ tests/
+# Linter
+ruff check app/ scripts/ tests/
+ruff format app/ scripts/ tests/
+
+# Type checking
 mypy app/ --strict
+
+# Lancer un seul tick (test rapide sans attendre 15m)
+python scripts/run_paper.py --once --strategy rsi_mean_reversion
 ```
+
+### Ajouter une stratégie
+
+1. Créer `app/strategies/<nom>.py` avec `@strategy_registry.register("<nom>")`
+2. Créer `config/strategies/<nom>.yaml`
+3. Importer dans `app/strategies/__init__.py`
+
+### Ajouter un broker
+
+1. Créer `app/providers/<nom>/provider.py` avec `@broker_registry.register("<nom>")`
+2. Créer `app/providers/<nom>/config.py`
+3. Importer dans `app/providers/__init__.py`
+
+Voir `tests/fixtures/dummy_provider/` pour un exemple minimal.
+
+---
+
+## 12. Règles non-négociables
+
+1. **Isolation broker** — aucun code métier ne connaît Alpaca directement
+2. **Idempotence** — `client_order_id` généré avant tout appel broker
+3. **Source de vérité positions** — le broker, jamais la DB locale
+4. **Pas de liquidation automatique** sur kill switch
+5. **Stop-loss côté broker** en live (bracket orders) pour survivre aux crashs Pi
+6. **Gate paper→live par stratégie** — bypass explicitement loggué
+7. **Hard stop mensuel 50 €** — non-relâchable avant le 1er du mois suivant
+8. **Live interdit sur laptop** sauf `ALLOW_LIVE_ON_LAPTOP=true` explicite
+9. **PDT compliance obligatoire** en live (max 3 day-trades sur 5 jours glissants)
+10. **Déploiement live progressif** — 1 stratégie à la fois, jamais 3 simultanément
+11. **`Decimal` pour tout ce qui touche à l'argent** — jamais `float`
+12. **Pas de `print`, `float` monétaire, `time.sleep` async** en production
