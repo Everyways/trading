@@ -204,13 +204,15 @@ async def _run(args: argparse.Namespace) -> None:
         provider_name=cfg.provider,
     )
 
-    # Run engine
+    # Run engine — merge timeframe from top-level config into params so the
+    # engine can compute the correct bars_per_year annualisation factor.
+    params_with_tf = {**cfg.params, "timeframe": cfg.timeframe}
     engine = BacktestEngine(
         strategy=strategy,
         initial_equity=Decimal(str(args.equity)),
         commission_pct=args.commission,
     )
-    result = engine.run(df, cfg.params, instrument)
+    result = engine.run(df, params_with_tf, instrument)
 
     # Print results
     print(str(result))

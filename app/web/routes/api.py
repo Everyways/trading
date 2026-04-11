@@ -17,7 +17,7 @@ router = APIRouter()
 def status(_: str = Depends(require_auth)) -> dict[str, Any]:
     """Quick health / state snapshot — useful for Uptime Kuma, scripts, etc."""
     from app.data.database import get_session
-    from app.data.models import KillSwitch, Order, Strategy, Trade
+    from app.data.models import KillSwitch, Strategy, Trade
 
     result: dict[str, Any] = {
         "ok": True,
@@ -67,15 +67,21 @@ def status(_: str = Depends(require_auth)) -> dict[str, Any]:
                 for s in strategies
             ]
 
-            # Recent filled orders → open positions approximation
-            filled = session.exec(
-                select(Order).where(Order.status == "filled").order_by(
-                    Order.filled_at.desc()  # type: ignore[arg-type]
-                ).limit(100)
+            # Open positions from latest PositionSnapshot (one row per strategy/instrument)
+            from app.data.models import PositionSnapshot
+            recent_snaps = session.exec(
+                select(PositionSnapshot).order_by(PositionSnapshot.time.desc()).limit(200)
             ).all()
-            result["open_positions"] = sum(
-                1 for o in filled if o.side == "buy"
-            ) - sum(1 for o in filled if o.side == "sell")
+            seen_pos: set[tuple[int, int]] = set()
+            open_count = 0
+            for snap in recent_snaps:
+                key = (snap.strategy_id, snap.instrument_id)
+                if key in seen_pos:
+                    continue
+                seen_pos.add(key)
+                if abs(float(snap.qty or 0)) > 1e-9:
+                    open_count += 1
+            result["open_positions"] = open_count
 
     except Exception as exc:
         result["ok"] = False
