@@ -32,6 +32,7 @@ from app.core.registry import broker_registry  # noqa: E402
 from app.data.database import get_session  # noqa: E402
 from app.execution.runner import TradingRunner  # noqa: E402
 from app.execution.strategy_loader import load_strategy_configs  # noqa: E402
+from app.notifications.telegram import TelegramNotifier  # noqa: E402
 from app.risk.manager import RiskManager  # noqa: E402
 
 logging.basicConfig(
@@ -104,6 +105,11 @@ async def _run(args: argparse.Namespace) -> None:
 
     provider = provider_cls()
 
+    # Telegram notifications (optional — no-op if env vars absent)
+    from app.config import get_settings
+    _s = get_settings()
+    notifier = TelegramNotifier(_s.telegram_bot_token, _s.telegram_chat_id_global)
+
     # DB session — uses DATABASE_URL_SYNC from env
     # For SQLite: sqlite:///./data/paper.db
     # For PostgreSQL: postgresql+psycopg2://user:pass@host/db
@@ -123,6 +129,7 @@ async def _run(args: argparse.Namespace) -> None:
             risk_manager=risk_manager,
             session=session,
             global_config=global_config,
+            notifier=notifier,
         )
 
         if args.once:

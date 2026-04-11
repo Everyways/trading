@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from app.execution.strategy_loader import StrategyConfig
+    from app.notifications.telegram import TelegramNotifier
     from app.providers.base import BrokerProvider
     from app.risk.manager import RiskManager
     from app.strategies.base import Strategy
@@ -92,12 +93,14 @@ class TradingRunner:
         risk_manager: RiskManager,
         session: Session,
         global_config: dict[str, Any] | None = None,
+        notifier: TelegramNotifier | None = None,
     ) -> None:
         self._provider = provider
         self._cfgs = strategy_configs
         self._risk = risk_manager
         self._session = session
         self._global_config = global_config or {}
+        self._notifier = notifier
 
         # Instantiate strategy objects once (they are stateless)
         self._strategies: dict[str, Strategy] = {}
@@ -126,11 +129,14 @@ class TradingRunner:
             return
 
         await self._provider.connect()
+        strategy_names = [c.name for c in self._cfgs if c.name in self._strategies]
         log.info(
             "Connected to %s. Starting scheduler with %d strategy/symbol pair(s).",
             self._provider.name,
             sum(len(c.universe) for c in self._cfgs if c.name in self._strategies),
         )
+        if self._notifier:
+            await self._notifier.notify_startup(strategy_names)
 
         scheduler = AsyncIOScheduler(timezone="America/New_York")
         scheduler.add_job(self._tick, "cron", minute="0,15,30,45", id="main_tick")
@@ -264,6 +270,11 @@ class TradingRunner:
             )
             if not allowed:
                 log.info("Blocked: %s", rejection_reason)
+                # Notify only for critical stops (kill switch / monthly limit)
+                if self._notifier and any(
+                    kw in rejection_reason for kw in ("kill switch", "monthly hard stop")
+                ):
+                    await self._notifier.notify_risk_blocked(rejection_reason, cfg.name)
                 return
 
             # 6. Submit order
@@ -272,8 +283,10 @@ class TradingRunner:
             elif signal.side in (SignalSide.SELL, SignalSide.CLOSE):
                 await self._submit_sell(cfg, symbol, symbol_positions)
 
-        except Exception:
+        except Exception as exc:
             log.exception("Error evaluating %s/%s", cfg.name, symbol)
+            if self._notifier:
+                await self._notifier.notify_error(f"{cfg.name}/{symbol}", exc)
 
     async def _submit_buy(
         self,
@@ -310,6 +323,10 @@ class TradingRunner:
                 signal.instrument.symbol, qty, entry_price,
                 ack.status.value, ack.broker_order_id,
             )
+            if self._notifier:
+                await self._notifier.notify_order(
+                    "BUY", signal.instrument.symbol, qty, entry_price, cfg.name
+                )
         except Exception:
             log.exception("Failed to submit BUY for %s", signal.instrument.symbol)
 
@@ -342,5 +359,7 @@ class TradingRunner:
                 "SELL submitted: %s qty=%s → %s [%s]",
                 symbol, qty, ack.status.value, ack.broker_order_id,
             )
+            if self._notifier:
+                await self._notifier.notify_order("SELL", symbol, qty, "market", cfg.name)
         except Exception:
             log.exception("Failed to submit SELL for %s/%s", cfg.name, symbol)
