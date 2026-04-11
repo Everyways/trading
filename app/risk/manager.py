@@ -222,6 +222,17 @@ class RiskManager:
             state.order_times.clear()
         log.info("Daily risk state reset for %s", self._today)
 
+    def reset_monthly_state(self) -> None:
+        """Reset monthly loss counter. Call on the 1st of each month at 00:00 UTC.
+
+        Without this the in-memory _monthly_loss_eur accumulates across calendar
+        months and would permanently block trading after the first losing month.
+        """
+        self._monthly_loss_eur = Decimal("0")
+        # Also re-read from DB to pick up any trades that landed just before midnight
+        self._load_from_db()
+        log.info("Monthly risk state reset (month boundary)")
+
     @property
     def monthly_loss_eur(self) -> Decimal:
         return self._monthly_loss_eur

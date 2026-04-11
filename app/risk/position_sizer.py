@@ -44,7 +44,7 @@ def size_position(
     Returns:
         Quantity rounded to 3 decimal places (Alpaca fractional precision).
     """
-    if stop_loss_pct <= 0 or entry_price <= 0 or account_equity <= 0:
+    if stop_loss_pct <= 0 or risk_pct <= 0 or entry_price <= 0 or account_equity <= 0:
         return min_qty
 
     risk_amount = account_equity * Decimal(str(risk_pct)) / Decimal("100")

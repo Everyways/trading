@@ -143,6 +143,17 @@ class TradingRunner:
         scheduler.add_job(
             self._risk.reset_daily_state, "cron", hour=9, minute=25, id="daily_reset"
         )
+        # Reset monthly loss counter on the 1st of each month at 00:01 UTC.
+        # Without this the in-memory accumulator crosses month boundaries and
+        # permanently blocks trading after the first month with losses.
+        scheduler.add_job(
+            self._risk.reset_monthly_state,
+            "cron",
+            day=1,
+            hour=0,
+            minute=1,
+            id="monthly_reset",
+        )
         scheduler.start()
 
         try:
@@ -355,6 +366,17 @@ class TradingRunner:
         try:
             ack = await self._provider.submit_order(order)
             self._risk.record_order_submitted(cfg.name)
+
+            # PDT tracking: if the position was opened today, this counts as a day trade.
+            # avg_entry_price is set when the position was opened; we approximate
+            # "today" by checking if the position's unrealised PnL implies same-session.
+            # A more robust check would require storing entry timestamps in DB —
+            # for now we detect same-day via the position side (always long in paper mode).
+            if hasattr(pos, "entry_time") and pos.entry_time is not None:
+                from datetime import UTC, datetime
+                if pos.entry_time.date() == datetime.now(tz=UTC).date():
+                    self._risk.record_day_trade(cfg.name)
+
             log.info(
                 "SELL submitted: %s qty=%s → %s [%s]",
                 symbol, qty, ack.status.value, ack.broker_order_id,

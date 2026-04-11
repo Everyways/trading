@@ -96,6 +96,17 @@ class BacktestEngine:
         max_holding_bars = int(params.get("max_holding_bars", 0))
         risk_pct = float(params.get("risk_pct", 1.0))
 
+        # Compute annualisation factor from the strategy timeframe so the Sharpe
+        # ratio is correct regardless of bar size (5m, 15m, 1h, 1d, …).
+        _tf_minutes: dict[str, int] = {
+            "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+            "1h": 60, "4h": 240, "1d": 1440,
+        }
+        tf = str(params.get("timeframe", "15m"))
+        tf_minutes = _tf_minutes.get(tf, 15)
+        # US equity session = 390 minutes/day; daily bars use 252 days directly
+        bars_per_year = 252 if tf_minutes >= 1440 else int(252 * (390 / tf_minutes))
+
         # Need at least lookback + 1 signal bar + 1 fill bar
         if len(df) < lookback + 2:
             return BacktestResult(
@@ -266,6 +277,7 @@ class BacktestEngine:
             equity_curve,
             self._initial_equity,
             holding_bars,
+            bars_per_year=bars_per_year,
         )
 
         return BacktestResult(
