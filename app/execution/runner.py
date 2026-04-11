@@ -102,6 +102,10 @@ class TradingRunner:
         self._global_config = global_config or {}
         self._notifier = notifier
 
+        # In-memory entry-time registry: symbol → UTC datetime of last BUY fill.
+        # Used to detect same-session round-trips (day trades) for PDT tracking.
+        self._position_entry_times: dict[str, datetime] = {}
+
         # Instantiate strategy objects once (they are stateless)
         self._strategies: dict[str, Strategy] = {}
         for cfg in self._cfgs:
@@ -196,6 +200,62 @@ class TradingRunner:
         ]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        await self._snapshot_positions()
+
+    async def _snapshot_positions(self) -> None:
+        """Write a PositionSnapshot record for every non-flat broker position."""
+        try:
+            from sqlmodel import select as sqlselect
+
+            from app.data.models import Instrument as InstrumentModel
+            from app.data.models import PositionSnapshot
+            from app.data.models import Strategy as StrategyModel
+
+            positions = await self._provider.get_positions()
+            if not positions:
+                return
+
+            now = datetime.now(tz=UTC)
+            # Build symbol → strategy-name map from loaded configs
+            symbol_to_cfg = {
+                entry.symbol: cfg
+                for cfg in self._cfgs
+                if cfg.name in self._strategies
+                for entry in cfg.universe
+            }
+
+            for pos in positions:
+                if pos.is_flat:
+                    continue
+                cfg = symbol_to_cfg.get(pos.symbol)
+                if cfg is None:
+                    continue
+
+                instr_row = self._session.exec(
+                    sqlselect(InstrumentModel).where(
+                        InstrumentModel.symbol == pos.symbol
+                    )
+                ).first()
+                strat_row = self._session.exec(
+                    sqlselect(StrategyModel).where(StrategyModel.name == cfg.name)
+                ).first()
+                if instr_row is None or strat_row is None:
+                    continue
+
+                snap = PositionSnapshot(
+                    time=now,
+                    strategy_id=strat_row.id,
+                    instrument_id=instr_row.id,
+                    qty=pos.qty,
+                    avg_entry=pos.avg_entry_price,
+                    unrealized_pnl=pos.unrealized_pnl,
+                    mode=cfg.mode,
+                )
+                self._session.add(snap)
+            self._session.commit()
+        except Exception:
+            log.exception("Failed to write position snapshots")
 
     async def _market_is_open(self) -> bool:
         """Check Alpaca market clock. Returns True if the market is open."""
@@ -334,6 +394,7 @@ class TradingRunner:
                 signal.instrument.symbol, qty, entry_price,
                 ack.status.value, ack.broker_order_id,
             )
+            self._position_entry_times[signal.instrument.symbol] = datetime.now(tz=UTC)
             if self._notifier:
                 await self._notifier.notify_order(
                     "BUY", signal.instrument.symbol, qty, entry_price, cfg.name
@@ -367,15 +428,11 @@ class TradingRunner:
             ack = await self._provider.submit_order(order)
             self._risk.record_order_submitted(cfg.name)
 
-            # PDT tracking: if the position was opened today, this counts as a day trade.
-            # avg_entry_price is set when the position was opened; we approximate
-            # "today" by checking if the position's unrealised PnL implies same-session.
-            # A more robust check would require storing entry timestamps in DB —
-            # for now we detect same-day via the position side (always long in paper mode).
-            if hasattr(pos, "entry_time") and pos.entry_time is not None:
-                from datetime import UTC, datetime
-                if pos.entry_time.date() == datetime.now(tz=UTC).date():
-                    self._risk.record_day_trade(cfg.name)
+            # PDT tracking: check our in-memory registry for the entry time.
+            # If the BUY was placed today, this SELL is a same-session round-trip → day trade.
+            entry_dt = self._position_entry_times.pop(symbol, None)
+            if entry_dt is not None and entry_dt.date() == datetime.now(tz=UTC).date():
+                self._risk.record_day_trade(cfg.name)
 
             log.info(
                 "SELL submitted: %s qty=%s → %s [%s]",
