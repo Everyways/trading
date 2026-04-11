@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Trading Bot{% endblock %}
+
+{% block content %}
+
+{% if error %}
+<div class="alert alert-warn">
+  <strong>DB error:</strong> {{ error }}
+</div>
+{% endif %}
+
+{% if kill_switch %}
+<div class="alert alert-crit">
+  &#x1F6A8; <strong>Global kill switch engaged</strong>
+  {% if kill_switch_reason %} — {{ kill_switch_reason }}{% endif %}
+</div>
+{% endif %}
+
+<!-- ── Summary cards ─────────────────────────────── -->
+<section class="cards">
+  <div class="card">
+    <div class="card-label">Today PnL</div>
+    <div class="card-value {{ 'pos' if today_pnl >= 0 else 'neg' }}">
+      {{ '%+.2f' | format(today_pnl) | replace('+', '+$') if today_pnl >= 0 else '-$' + '%.2f' | format(today_pnl | abs) }}
+    </div>
+    <div class="card-sub">{{ today_trades }} trade{{ 's' if today_trades != 1 }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Monthly Loss (EUR)</div>
+    <div class="card-value {{ 'neg' if monthly_loss_eur > 0 else 'muted' }}">
+      &euro;{{ '%.2f' | format(monthly_loss_eur) }}
+    </div>
+    <div class="card-sub">limit &euro;50.00</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Open Positions</div>
+    <div class="card-value">{{ positions | length }}</div>
+    <div class="card-sub">across all strategies</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Strategies</div>
+    <div class="card-value">{{ strategies | selectattr('enabled') | list | length }} / {{ strategies | length }}</div>
+    <div class="card-sub">enabled</div>
+  </div>
+</section>
+
+<!-- ── Positions ──────────────────────────────────── -->
+<section>
+  <h2>Open Positions</h2>
+  {% if positions %}
+  <table>
+    <thead>
+      <tr><th>Symbol</th><th>Strategy</th><th>Qty</th><th>Avg Entry</th><th>Unrealised PnL</th><th>Time</th></tr>
+    </thead>
+    <tbody>
+      {% for p in positions %}
+      <tr>
+        <td><strong>{{ p.symbol }}</strong></td>
+        <td class="muted">{{ p.strategy }}</td>
+        <td>{{ p.qty }}</td>
+        <td>${{ p.avg_entry }}</td>
+        <td class="{{ p.pnl_class }}">{{ p.unrealized_pnl_fmt }}</td>
+        <td class="muted">{{ p.time }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty">No open positions.</p>
+  {% endif %}
+</section>
+
+<!-- ── Strategies ─────────────────────────────────── -->
+<section>
+  <h2>Strategies</h2>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Version</th><th>Mode</th><th>Status</th><th>Last loaded</th></tr>
+    </thead>
+    <tbody>
+      {% for s in strategies %}
+      <tr>
+        <td><strong>{{ s.name }}</strong></td>
+        <td class="muted">{{ s.version }}</td>
+        <td><span class="badge {{ 'badge-paper' if s.mode == 'paper' else 'badge-live' }}">{{ s.mode }}</span></td>
+        <td>
+          {% if s.enabled %}
+          <span class="badge badge-ok">enabled</span>
+          {% else %}
+          <span class="badge badge-off">disabled</span>
+          {% endif %}
+        </td>
+        <td class="muted">{{ s.last_loaded }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<!-- ── Recent trades ─────────────────────────────── -->
+<section>
+  <h2>Recent Trades</h2>
+  {% if recent_trades %}
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Duration</th></tr>
+    </thead>
+    <tbody>
+      {% for t in recent_trades %}
+      <tr>
+        <td class="muted">{{ t.time }}</td>
+        <td><strong>{{ t.symbol }}</strong></td>
+        <td class="muted">{{ t.strategy }}</td>
+        <td><span class="badge {{ 'badge-buy' if t.side == 'BUY' else 'badge-sell' }}">{{ t.side }}</span></td>
+        <td>{{ t.qty }}</td>
+        <td>${{ t.entry_price }}</td>
+        <td>${{ t.exit_price }}</td>
+        <td class="{{ t.pnl_class }}">{{ t.pnl_fmt }}</td>
+        <td class="muted">{{ t.duration }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty">No trades recorded yet.</p>
+  {% endif %}
+</section>
+
+<!-- ── Recent orders ─────────────────────────────── -->
+<section>
+  <h2>Recent Orders</h2>
+  {% if recent_orders %}
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Qty</th><th>Fill Price</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for o in recent_orders %}
+      <tr>
+        <td class="muted">{{ o.time }}</td>
+        <td><strong>{{ o.symbol }}</strong></td>
+        <td class="muted">{{ o.strategy }}</td>
+        <td><span class="badge {{ 'badge-buy' if o.side == 'BUY' else 'badge-sell' }}">{{ o.side }}</span></td>
+        <td>{{ o.qty }}</td>
+        <td>{{ o.fill_price }}</td>
+        <td><span class="badge badge-status-{{ o.status }}">{{ o.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty">No orders recorded yet.</p>
+  {% endif %}
+</section>
+
+<!-- ── Risk events ────────────────────────────────── -->
+<section>
+  <h2>Risk Events</h2>
+  {% if risk_events %}
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Severity</th><th>Type</th><th>Message</th></tr>
+    </thead>
+    <tbody>
+      {% for e in risk_events %}
+      <tr>
+        <td class="muted">{{ e.time }}</td>
+        <td><span class="badge badge-sev-{{ e.severity }}">{{ e.severity }}</span></td>
+        <td class="muted">{{ e.type }}</td>
+        <td>{{ e.message }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty">No risk events.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

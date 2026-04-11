@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="30">
+  <title>{% block title %}Trading Bot{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">&#9661; Trading Bot</span>
+      {% if kill_switch %}
+      <span class="badge badge-crit">&#x1F6A8; KILL SWITCH</span>
+      {% endif %}
+      <span class="muted">{{ now }}</span>
+    </div>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    Auto-refresh every 30 s &nbsp;|&nbsp; <a href="/api/status">API status</a>
+  </footer>
+</body>
+</html>
