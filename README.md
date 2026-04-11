@@ -25,6 +25,10 @@ Bot de trading automatisé pour Raspberry Pi — strategies RSI, MA Crossover, B
 11. [Développement local](#11-développement-local)
 12. [Règles non-négociables](#12-règles-non-négociables)
 
+> **Documentation complémentaire :**
+> - [`docs/guide-utilisation.md`](docs/guide-utilisation.md) — comment le bot fonctionne, stratégies, Risk Manager, dashboard, FAQ
+> - [`docs/glossaire.md`](docs/glossaire.md) — définitions du jargon financier et technique (bracket, kill switch, PDT, Sharpe…)
+
 ---
 
 ## 1. Obtenir les clés API
@@ -487,7 +491,7 @@ sudo systemctl restart trading-bot.service
 docker compose -f docker-compose.prod.yml restart bot
 ```
 
-> **Le kill switch ne liquide pas les positions ouvertes.** Si besoin de clôturer d'urgence, utiliser directement l'app Alpaca.
+> **Le kill switch liquide automatiquement toutes les positions ouvertes** (orders market SELL) au tick suivant son engagement. Les ordres bracket enfants (stop-loss/take-profit) en attente chez Alpaca ne sont pas annulés automatiquement — les gérer via l'interface Alpaca si nécessaire.
 
 ---
 
@@ -610,7 +614,7 @@ Voir `tests/fixtures/dummy_provider/` pour un exemple minimal.
 1. **Isolation broker** — aucun code métier ne connaît Alpaca directement
 2. **Idempotence** — `client_order_id` généré avant tout appel broker
 3. **Source de vérité positions** — le broker, jamais la DB locale
-4. **Pas de liquidation automatique** sur kill switch
+4. **Liquidation automatique** sur kill switch — toutes les positions sont clôturées au market au premier tick suivant l'engagement
 5. **Stop-loss côté broker** en live (bracket orders) pour survivre aux crashs Pi
 6. **Gate paper→live par stratégie** — bypass explicitement loggué
 7. **Hard stop mensuel 50 €** — non-relâchable avant le 1er du mois suivant
