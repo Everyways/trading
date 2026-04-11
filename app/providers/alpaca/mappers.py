@@ -15,6 +15,9 @@ from alpaca.trading.enums import (
     AssetClass as AlpacaAssetClass,
 )
 from alpaca.trading.enums import (
+    OrderClass as AlpacaOrderClass,
+)
+from alpaca.trading.enums import (
     OrderSide as AlpacaOrderSide,
 )
 from alpaca.trading.enums import (
@@ -51,7 +54,9 @@ from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
     StopLimitOrderRequest,
+    StopLossRequest,
     StopOrderRequest,
+    TakeProfitRequest,
 )
 
 from app.core.domain import (
@@ -321,6 +326,13 @@ def order_request_to_alpaca(
     )
 
     if req.type == OrderType.MARKET:
+        if req.stop_loss_price and req.take_profit_price:
+            return MarketOrderRequest(
+                **common,
+                order_class=AlpacaOrderClass.BRACKET,
+                stop_loss=StopLossRequest(stop_price=float(req.stop_loss_price)),
+                take_profit=TakeProfitRequest(limit_price=float(req.take_profit_price)),
+            )
         return MarketOrderRequest(**common)
     if req.type == OrderType.LIMIT:
         return LimitOrderRequest(limit_price=float(req.limit_price or 0), **common)

@@ -106,6 +106,10 @@ class TradingRunner:
         # Used to detect same-session round-trips (day trades) for PDT tracking.
         self._position_entry_times: dict[str, datetime] = {}
 
+        # Tracks whether we already liquidated after the kill switch engaged,
+        # so we do not re-submit SELLs on every subsequent halted tick.
+        self._positions_liquidated: bool = False
+
         # Instantiate strategy objects once (they are stateless)
         self._strategies: dict[str, Strategy] = {}
         for cfg in self._cfgs:
@@ -183,8 +187,15 @@ class TradingRunner:
     async def _tick(self) -> None:
         """One evaluation cycle: called at each 15-minute bar close."""
         if self._risk.is_halted():
-            log.warning("Global kill switch engaged — skipping tick")
+            if not self._positions_liquidated:
+                log.warning("Kill switch engaged — liquidating all open positions")
+                await self._liquidate_all_positions()
+                self._positions_liquidated = True
+            else:
+                log.debug("Kill switch engaged — positions already liquidated, skipping tick")
             return
+        # Kill switch may have been reset externally (e.g. via dashboard)
+        self._positions_liquidated = False
 
         if not await self._market_is_open():
             log.debug("Market closed — skipping tick")
@@ -256,6 +267,39 @@ class TradingRunner:
             self._session.commit()
         except Exception:
             log.exception("Failed to write position snapshots")
+
+    async def _liquidate_all_positions(self) -> None:
+        """Emergency market-sell of every non-flat position (kill switch path)."""
+        try:
+            positions = await self._provider.get_positions()
+            open_pos = [p for p in positions if not p.is_flat]
+            if not open_pos:
+                log.info("Kill switch: no open positions to liquidate")
+                return
+            log.warning("Kill switch: liquidating %d open position(s)", len(open_pos))
+            for pos in open_pos:
+                order = OrderRequest(
+                    symbol=pos.symbol,
+                    side=OrderSide.SELL,
+                    type=OrderType.MARKET,
+                    qty=abs(pos.qty),
+                    strategy_name="kill_switch",
+                )
+                try:
+                    ack = await self._provider.submit_order(order)
+                    log.warning(
+                        "Kill switch SELL: %s qty=%s → %s [%s]",
+                        pos.symbol, abs(pos.qty), ack.status.value, ack.broker_order_id,
+                    )
+                    if self._notifier:
+                        await self._notifier.notify_kill_switch(
+                            scope="global",
+                            reason=f"auto-liquidated {pos.symbol} qty={abs(pos.qty)}",
+                        )
+                except Exception:
+                    log.exception("Kill switch: failed to liquidate %s", pos.symbol)
+        except Exception:
+            log.exception("Kill switch: failed to fetch positions for liquidation")
 
     async def _market_is_open(self) -> bool:
         """Check Alpaca market clock. Returns True if the market is open."""
@@ -366,9 +410,16 @@ class TradingRunner:
         df: pd.DataFrame,
         account_equity: Decimal,
     ) -> None:
-        """Size and submit a market BUY order."""
+        """Size and submit a market BUY order.
+
+        If the strategy config contains ``take_profit_pct`` the order is
+        submitted as a bracket order: Alpaca attaches a stop-loss sell leg
+        (at ``stop_loss_pct`` below entry) and a take-profit limit sell leg
+        (at ``take_profit_pct`` above entry) as child orders automatically.
+        """
         entry_price = Decimal(str(df["close"].iloc[-1]))
         stop_loss_pct = float(cfg.params.get("stop_loss_pct", 2.0))
+        take_profit_pct = float(cfg.params.get("take_profit_pct", 0.0))
         risk_pct = float(cfg.risk.get("max_risk_per_trade_pct", 1.0))
 
         qty = size_position(
@@ -378,20 +429,35 @@ class TradingRunner:
             risk_pct=risk_pct,
         )
 
+        # Bracket prices (both required for Alpaca bracket order class)
+        sl_price = (entry_price * (1 - Decimal(str(stop_loss_pct)) / 100)).quantize(
+            Decimal("0.01")
+        )
+        tp_price: Decimal | None = None
+        if take_profit_pct > 0:
+            tp_price = (
+                entry_price * (1 + Decimal(str(take_profit_pct)) / 100)
+            ).quantize(Decimal("0.01"))
+
         order = OrderRequest(
             symbol=signal.instrument.symbol,
             side=OrderSide.BUY,
             type=OrderType.MARKET,
             qty=qty,
             strategy_name=cfg.name,
+            stop_loss_price=sl_price,
+            take_profit_price=tp_price,   # None → plain market order
         )
 
         try:
             ack = await self._provider.submit_order(order)
             self._risk.record_order_submitted(cfg.name)
+            bracket_info = (
+                f" [bracket SL={sl_price} TP={tp_price}]" if tp_price else f" [SL={sl_price}]"
+            )
             log.info(
-                "BUY submitted: %s qty=%s @ ~%s → %s [%s]",
-                signal.instrument.symbol, qty, entry_price,
+                "BUY submitted: %s qty=%s @ ~%s%s → %s [%s]",
+                signal.instrument.symbol, qty, entry_price, bracket_info,
                 ack.status.value, ack.broker_order_id,
             )
             self._position_entry_times[signal.instrument.symbol] = datetime.now(tz=UTC)

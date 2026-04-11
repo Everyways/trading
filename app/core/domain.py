@@ -89,6 +89,12 @@ class OrderRequest(BaseModel):
     instrument: Optional[Instrument] = None
     extended_hours: bool = False
 
+    # Optional bracket order legs.
+    # When both are set the order is submitted as a bracket (OCO) order:
+    # the broker attaches a stop-loss sell and a take-profit limit sell.
+    stop_loss_price: Optional[Decimal] = None
+    take_profit_price: Optional[Decimal] = None
+
     @field_validator("qty")
     @classmethod
     def qty_positive(cls, v: Decimal) -> Decimal:
