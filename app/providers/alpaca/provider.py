@@ -144,7 +144,7 @@ class AlpacaProvider(BrokerProvider):
         raw = await asyncio.to_thread(self._client.get_order_by_id, broker_order_id)
         return order_to_ack(raw)
 
-    # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
     # Historical data
     # ------------------------------------------------------------------
 
@@ -156,6 +156,22 @@ class AlpacaProvider(BrokerProvider):
         end: datetime,
     ) -> list[Candle]:
         assert self._data_client is not None, "Call connect() first"
+        
+        # --- AJOUT POUR GÉRER LA LIMITE FREE SIP (15 min delay) ---
+        from datetime import timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        limit_sip = now_utc - timedelta(minutes=16)
+        
+        # Si la date de fin demandée est plus récente que la limite autorisée
+        if end > limit_sip:
+            log.debug("Adjusting end date to bypass Alpaca Free SIP restriction")
+            end = limit_sip
+            
+        # Sécurité : si après ajustement 'end' devient inférieur à 'start'
+        if end <= start:
+            return []
+        # ---------------------------------------------------------
+
         alpaca_tf = timeframe_str_to_alpaca(timeframe)
         req = StockBarsRequest(
             symbol_or_symbols=symbol,
@@ -164,7 +180,7 @@ class AlpacaProvider(BrokerProvider):
             end=end,
         )
         bars_response = await asyncio.to_thread(self._data_client.get_stock_bars, req)
-        bars: list[AlpacaBar] = bars_response.get(symbol, [])
+        bars = bars_response.data.get(symbol, [])
         return [bar_to_candle(b, symbol, timeframe, is_closed=True) for b in bars]
 
     # ------------------------------------------------------------------
