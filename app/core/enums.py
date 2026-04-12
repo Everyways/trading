@@ -1,21 +1,21 @@
 """Domain enumerations — all string-based for JSON/DB compatibility."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
     STOP_LIMIT = "stop_limit"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING = "pending"
     SUBMITTED = "submitted"
     PARTIALLY_FILLED = "partially_filled"
@@ -25,43 +25,43 @@ class OrderStatus(str, Enum):
     EXPIRED = "expired"
 
 
-class TimeInForce(str, Enum):
+class TimeInForce(StrEnum):
     DAY = "day"
     GTC = "gtc"
     IOC = "ioc"
     FOK = "fok"
 
 
-class StrategyMode(str, Enum):
+class StrategyMode(StrEnum):
     PAPER = "paper"
     LIVE = "live"
 
 
-class AssetClass(str, Enum):
+class AssetClass(StrEnum):
     EQUITY = "equity"
     CRYPTO = "crypto"
     OPTION = "option"
     FOREX = "forex"
 
 
-class SignalSide(str, Enum):
+class SignalSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
     CLOSE = "close"
 
 
-class KillSwitchScope(str, Enum):
+class KillSwitchScope(StrEnum):
     GLOBAL = "global"
     STRATEGY = "strategy"
 
 
-class RiskSeverity(str, Enum):
+class RiskSeverity(StrEnum):
     INFO = "info"
     WARN = "warn"
     CRITICAL = "critical"
 
 
-class RiskEventType(str, Enum):
+class RiskEventType(StrEnum):
     DRAWDOWN_LIMIT = "drawdown_limit"
     DAILY_LOSS_LIMIT = "daily_loss_limit"
     MONTHLY_LOSS_LIMIT = "monthly_loss_limit"
@@ -76,20 +76,20 @@ class RiskEventType(str, Enum):
     RUNNER_CRASH = "runner_crash"
 
 
-class PositionSide(str, Enum):
+class PositionSide(StrEnum):
     LONG = "long"
     SHORT = "short"
 
 
-class DataSource(str, Enum):
+class DataSource(StrEnum):
     REST = "rest"
     WEBSOCKET = "ws"
 
 
-class UniverseResolutionStrategy(str, Enum):
+class UniverseResolutionStrategy(StrEnum):
     FIRST_AVAILABLE = "first_available"
 
 
-class OnNoProfileMatch(str, Enum):
+class OnNoProfileMatch(StrEnum):
     DISABLE_STRATEGY = "disable_strategy"
     FAIL_BOOT = "fail_boot"

@@ -12,15 +12,15 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Callable
 
 T = TypeVar("T")
 
 
-class Registry(Generic[T]):
+class Registry(Generic[T]):  # noqa: UP046 — PEP 695 syntax requires Python 3.12+
     """Thread-safe plugin registry backed by a simple dict.
 
     Keys are string identifiers. Values are the registered classes (not instances).

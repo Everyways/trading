@@ -7,19 +7,22 @@ No broker-specific type may appear outside app/providers/<name>/.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import AsyncIterator, Optional
+from typing import TYPE_CHECKING
 
-from app.core.domain import (
-    Account,
-    Candle,
-    Fill,
-    Instrument,
-    OrderAck,
-    OrderRequest,
-    Position,
-)
-from app.providers.capabilities import BrokerCapabilities
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from datetime import datetime
+
+    from app.core.domain import (
+        Account,
+        Candle,
+        Fill,
+        Instrument,
+        OrderAck,
+        OrderRequest,
+        Position,
+    )
+    from app.providers.capabilities import BrokerCapabilities
 
 
 class BrokerProvider(ABC):
@@ -45,7 +48,7 @@ class BrokerProvider(ABC):
         """Return all current open positions."""
 
     @abstractmethod
-    async def get_position(self, symbol: str) -> Optional[Position]:
+    async def get_position(self, symbol: str) -> Position | None:
         """Return the current position for a symbol, or None if flat."""
 
     @abstractmethod

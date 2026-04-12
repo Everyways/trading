@@ -7,6 +7,8 @@ Create Date: 2026-04-09
 
 from __future__ import annotations
 
+import contextlib
+
 import sqlalchemy as sa
 import sqlmodel  # noqa: F401
 from alembic import op
@@ -70,14 +72,12 @@ def upgrade() -> None:
     )
 
     # Convert ohlcv to TimescaleDB hypertable (no-op on non-TimescaleDB DBs)
-    try:
+    with contextlib.suppress(Exception):
+        # TimescaleDB not available (e.g. plain PostgreSQL or SQLite in tests)
         op.execute(
             "SELECT create_hypertable('ohlcv', 'time', if_not_exists => TRUE, "
             "migrate_data => TRUE)"
         )
-    except Exception:
-        # TimescaleDB not available (e.g. plain PostgreSQL or SQLite in tests)
-        pass
 
     # --- signals ---
     op.create_table(

@@ -6,9 +6,9 @@ All monetary values use Decimal. Datetime fields are always timezone-aware.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime  # noqa: TC003 — Pydantic needs this at runtime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -30,8 +30,8 @@ class Instrument(BaseModel):
     symbol: str
     asset_class: AssetClass
     provider_name: str
-    tick_size: Optional[Decimal] = None
-    min_qty: Optional[Decimal] = None
+    tick_size: Decimal | None = None
+    min_qty: Decimal | None = None
     active: bool = True
 
     @field_validator("symbol")
@@ -56,7 +56,7 @@ class Candle(BaseModel):
     is_closed: bool = True  # False = bar still forming (must never reach generate_signal)
 
     @model_validator(mode="after")
-    def validate_ohlc(self) -> "Candle":
+    def validate_ohlc(self) -> Candle:
         if self.high < self.open or self.high < self.close or self.high < self.low:
             raise ValueError(f"high {self.high} must be >= open, close, and low")
         if self.low > self.open or self.low > self.close or self.low > self.high:
@@ -82,18 +82,18 @@ class OrderRequest(BaseModel):
     side: OrderSide
     type: OrderType
     qty: Decimal
-    limit_price: Optional[Decimal] = None
-    stop_price: Optional[Decimal] = None
+    limit_price: Decimal | None = None
+    stop_price: Decimal | None = None
     time_in_force: TimeInForce = TimeInForce.DAY
-    strategy_name: Optional[str] = None
-    instrument: Optional[Instrument] = None
+    strategy_name: str | None = None
+    instrument: Instrument | None = None
     extended_hours: bool = False
 
     # Optional bracket order legs.
     # When both are set the order is submitted as a bracket (OCO) order:
     # the broker attaches a stop-loss sell and a take-profit limit sell.
-    stop_loss_price: Optional[Decimal] = None
-    take_profit_price: Optional[Decimal] = None
+    stop_loss_price: Decimal | None = None
+    take_profit_price: Decimal | None = None
 
     @field_validator("qty")
     @classmethod
@@ -114,10 +114,10 @@ class OrderAck(BaseModel):
     type: OrderType
     qty: Decimal
     filled_qty: Decimal = Decimal("0")
-    avg_fill_price: Optional[Decimal] = None
-    submitted_at: Optional[datetime] = None
-    filled_at: Optional[datetime] = None
-    error_message: Optional[str] = None
+    avg_fill_price: Decimal | None = None
+    submitted_at: datetime | None = None
+    filled_at: datetime | None = None
+    error_message: str | None = None
 
 
 class Position(BaseModel):
@@ -126,12 +126,12 @@ class Position(BaseModel):
     symbol: str
     qty: Decimal                    # positive = long, negative = short
     avg_entry_price: Decimal
-    current_price: Optional[Decimal] = None
-    unrealized_pnl: Optional[Decimal] = None
+    current_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
     side: PositionSide = PositionSide.LONG
 
     @property
-    def market_value(self) -> Optional[Decimal]:
+    def market_value(self) -> Decimal | None:
         if self.current_price is None:
             return None
         return abs(self.qty) * self.current_price
@@ -175,7 +175,7 @@ class Signal(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)   # indicator snapshot
     time: datetime                  # time of the last closed candle
     executed: bool = False
-    rejected_reason: Optional[str] = None
+    rejected_reason: str | None = None
 
 
 class Trade(BaseModel):

@@ -7,9 +7,13 @@ subscriber does not block publishers (bounded queue per subscriber).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 @dataclass
@@ -44,10 +48,8 @@ class EventBus:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
                     # Drop the oldest item to make room (prefer freshness)
-                    try:
+                    with contextlib.suppress(asyncio.QueueEmpty):
                         queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
                     queue.put_nowait(event)
 
     def subscribe(
