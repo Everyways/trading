@@ -1,0 +1,12 @@
+# Grille de paramètres — MACD Crossover
+# Utilisée par scripts/run_walk_forward.py
+#
+# Contrainte : fast doit être < slow (vérifiée par validate_params).
+# Les paires (8,21), (8,26), (12,21), (12,26) sont toutes valides.
+#
+# Total : 2 × 2 × 2 × 3 = 24 combinaisons
+param_grid:
+  fast:          [8, 12]
+  slow:          [21, 26]
+  signal_period: [7, 9]
+  stop_loss_pct: [1.5, 2.0, 3.0]

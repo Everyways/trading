@@ -1,0 +1,9 @@
+# Grille de paramètres — Bollinger Bands Mean Reversion
+# Utilisée par scripts/run_walk_forward.py
+#
+# Total : 3 × 3 × 3 × 3 = 81 combinaisons
+param_grid:
+  bb_period:     [15, 20, 30]
+  bb_std:        [1.5, 2.0, 2.5]
+  rsi_confirm:   [30.0, 40.0, 50.0]
+  stop_loss_pct: [1.5, 2.0, 3.0]

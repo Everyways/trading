@@ -100,6 +100,35 @@ class TelegramNotifier:
         )
         await self._send(text)
 
+    async def notify_daily_report(
+        self,
+        date_str: str,
+        net_pnl: Decimal,
+        trades: int,
+        wins: int,
+        win_rate_pct: float,
+        monthly_loss_eur: Decimal,
+        open_positions: int,
+        strategy_summary: list[tuple[str, int, Decimal]],
+    ) -> None:
+        """Rich end-of-day report sent at 16:30 ET with per-strategy breakdown."""
+        sign = "+" if net_pnl >= 0 else ""
+        win_label = f"{wins}/{trades} ({win_rate_pct:.0f}%)" if trades > 0 else "n/a"
+        lines = [
+            f"\U0001f4ca *Rapport journalier \u2014 {date_str}*",   # 📊
+            f"PnL net : `{sign}${net_pnl:.2f}`",
+            f"Trades : `{trades}`  \u2014  Victoires : `{win_label}`",
+            f"Positions ouvertes : `{open_positions}`",
+            f"Perte mensuelle : `\u20ac{monthly_loss_eur:.2f}`",
+        ]
+        if strategy_summary:
+            lines.append("")
+            lines.append("*Par strat\u00e9gie :*")
+            for name, count, pnl in strategy_summary:
+                s = "+" if pnl >= 0 else ""
+                lines.append(f"  \u2022 `{name}` \u2014 {count} trade(s), `{s}${pnl:.2f}`")
+        await self._send("\n".join(lines))
+
     async def notify_startup(self, strategies: list[str]) -> None:
         """Sent once when the paper trading runner starts."""
         names = ", ".join(f"`{s}`" for s in strategies)

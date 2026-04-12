@@ -162,6 +162,13 @@ class TradingRunner:
             minute=1,
             id="monthly_reset",
         )
+        scheduler.add_job(
+            self._daily_report,
+            "cron",
+            hour=16,
+            minute=30,
+            id="daily_report",
+        )
         scheduler.start()
 
         try:
@@ -467,6 +474,74 @@ class TradingRunner:
                 )
         except Exception:
             log.exception("Failed to submit BUY for %s", signal.instrument.symbol)
+
+    async def _daily_report(self) -> None:
+        """Compile and send the end-of-day Telegram report at 16:30 ET.
+
+        Queries today's closed trades from the DB, groups them by strategy,
+        then calls notify_daily_report() on the notifier.
+        """
+        if not self._notifier:
+            return
+        try:
+            from sqlmodel import select as sqlselect
+
+            from app.data.models import Strategy as StrategyModel
+            from app.data.models import Trade as TradeModel
+
+            now = datetime.now(tz=UTC)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + timedelta(days=1)
+
+            trades_today = self._session.exec(
+                sqlselect(TradeModel).where(
+                    TradeModel.exit_time >= today_start,
+                    TradeModel.exit_time < today_end,
+                )
+            ).all()
+
+            total = len(trades_today)
+            wins = sum(1 for t in trades_today if (t.pnl_net or Decimal("0")) > 0)
+            win_rate = wins / total * 100 if total > 0 else 0.0
+            net_pnl = sum((t.pnl_net or Decimal("0")) for t in trades_today)
+
+            # Group by strategy_id
+            by_strategy: dict[int, list] = {}
+            for t in trades_today:
+                if t.strategy_id:
+                    by_strategy.setdefault(t.strategy_id, []).append(t)
+
+            strat_summary: list[tuple[str, int, Decimal]] = []
+            for strat_id, strat_trades in sorted(by_strategy.items()):
+                strat_row = self._session.exec(
+                    sqlselect(StrategyModel).where(StrategyModel.id == strat_id)
+                ).first()
+                name = strat_row.name if strat_row else f"strategy_{strat_id}"
+                strat_pnl = sum((t.pnl_net or Decimal("0")) for t in strat_trades)
+                strat_summary.append((name, len(strat_trades), strat_pnl))
+
+            # Open positions from broker (best-effort)
+            open_positions = 0
+            try:
+                positions = await self._provider.get_positions()
+                open_positions = sum(1 for p in positions if not p.is_flat)
+            except Exception:
+                log.warning("Daily report: could not fetch open positions count")
+
+            date_str = now.strftime("%d/%m/%Y")
+            await self._notifier.notify_daily_report(
+                date_str=date_str,
+                net_pnl=net_pnl,
+                trades=total,
+                wins=wins,
+                win_rate_pct=win_rate,
+                monthly_loss_eur=self._risk.monthly_loss_eur,
+                open_positions=open_positions,
+                strategy_summary=strat_summary,
+            )
+            log.info("Daily report sent for %s", date_str)
+        except Exception:
+            log.exception("Failed to send daily report")
 
     async def _submit_sell(
         self,

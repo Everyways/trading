@@ -20,6 +20,7 @@ Ce document explique le fonctionnement interne du bot, les décisions qu'il pren
 10. [Modifier les paramètres d'une stratégie](#10-modifier-les-paramètres-dune-stratégie)
 11. [Créer une nouvelle stratégie](#11-créer-une-nouvelle-stratégie)
 12. [FAQ opérationnelle](#12-faq-opérationnelle)
+13. [Optimisation des paramètres par Walk-Forward](#13-optimisation-des-paramètres-par-walk-forward)
 
 ---
 
@@ -571,17 +572,40 @@ curl -u admin:motdepasse http://<ip>:8080/api/status | python3 -m json.tool
 Si `TELEGRAM_BOT_TOKEN` et `TELEGRAM_CHAT_ID_GLOBAL` sont renseignés dans
 `.env`, le bot envoie les alertes suivantes :
 
-| Événement | Message |
-|-----------|---------|
-| Démarrage | Bot démarré, liste des stratégies actives |
-| Ordre BUY | Symbole, quantité, prix estimé, stratégie |
-| Ordre SELL | Symbole, quantité, stratégie |
-| Blocage critique | Kill switch ou hard stop mensuel atteint |
-| Liquidation kill switch | Chaque position liquidée (alerte critique) |
-| Erreur non gérée | Exception avec contexte stratégie/symbole |
+| Événement | Heure | Message |
+|-----------|-------|---------|
+| Démarrage | au lancement | Bot démarré, liste des stratégies actives |
+| Ordre BUY | temps réel | Symbole, quantité, prix estimé, stratégie |
+| Ordre SELL | temps réel | Symbole, quantité, stratégie |
+| Blocage critique | temps réel | Kill switch ou hard stop mensuel atteint |
+| Liquidation kill switch | temps réel | Chaque position liquidée (alerte critique) |
+| **Rapport journalier** | **16h30 ET** | **Bilan complet du jour (voir ci-dessous)** |
+| Erreur non gérée | temps réel | Exception avec contexte stratégie/symbole |
 
 Les notifications **non critiques** (signal bloqué par rate limit, marché
 fermé, etc.) ne génèrent pas de message Telegram pour ne pas spammer.
+
+### Rapport journalier (16h30 ET)
+
+Chaque jour de bourse à 16h30 (heure de New York), le bot envoie
+automatiquement un récapitulatif complet :
+
+```
+📊 Rapport journalier — 12/04/2026
+PnL net : +$47.82
+Trades : 5  —  Victoires : 3/5 (60%)
+Positions ouvertes : 1
+Perte mensuelle : €12.40
+
+Par stratégie :
+  • rsi_mean_reversion — 3 trade(s), +$31.50
+  • macd_crossover — 2 trade(s), +$16.32
+```
+
+Le rapport est compilé à partir de la table `trades` (clôturés dans la
+journée UTC) et des positions ouvertes chez le broker au moment de l'envoi.
+Si aucune notification Telegram n'est configurée, le rapport est simplement
+ignoré (le bot tourne normalement).
 
 ### Tester les notifications
 
@@ -823,3 +847,117 @@ Un seul bot par broker account est recommandé.
 Le bot est très léger entre les ticks (CPU ≈ 0 %). Pendant un tick,
 la charge est brève (calcul pandas + 1–2 appels REST). Un Raspberry Pi 4
 avec 4 Go de RAM gère sans difficulté 10 stratégies simultanées.
+
+---
+
+## 13. Optimisation des paramètres par Walk-Forward
+
+Le walk-forward est la méthode la plus robuste pour choisir les paramètres
+d'une stratégie : au lieu de chercher les meilleurs paramètres sur **toutes**
+les données historiques (risque d'overfitting), on répète le processus sur
+des fenêtres glissantes et on mesure la performance réelle hors échantillon.
+
+### Principe
+
+```
+Données complètes : ──────────────────────────────────────────────▶
+                    │←─ IS (252j) ─→│←─ OOS (63j) ─→│
+                         ↕ grid search   ↕ forward-test
+                    │←─ step (63j) ──▶│←─ IS ─→│←─ OOS ─→│
+                                           …
+```
+
+| Terme | Définition |
+|-------|-----------|
+| **IS (In-Sample)** | Fenêtre d'entraînement : grid search sur tous les combos |
+| **OOS (Out-of-Sample)** | Fenêtre de test : meilleurs params IS appliqués à des données inconnues |
+| **Step** | Décalage de la fenêtre pour l'itération suivante |
+| **Fold** | Une paire IS + OOS |
+
+### Utilisation
+
+```bash
+python scripts/run_walk_forward.py \
+    --strategy rsi_mean_reversion \
+    --symbol   SPY \
+    --start    2022-01-01 \
+    --end      2024-12-31 \
+    --in-sample      252 \
+    --out-of-sample   63 \
+    --step            63 \
+    --param-grid config/param_grids/rsi_mean_reversion.yaml \
+    --metric     sharpe \
+    --output     results/wf_rsi_spy.csv
+```
+
+### Options
+
+| Option | Défaut | Description |
+|--------|--------|-------------|
+| `--strategy` | — | Nom de la stratégie (doit exister dans `config/strategies/`) |
+| `--symbol` | — | Ticker (ex. `SPY`, `QQQ`) |
+| `--start` / `--end` | — | Plage de données complète |
+| `--in-sample` | 252 | Durée de la fenêtre IS en jours calendaires |
+| `--out-of-sample` | 63 | Durée de la fenêtre OOS en jours calendaires |
+| `--step` | 63 | Avancement de la fenêtre entre deux folds |
+| `--param-grid` | — | Chemin vers le fichier YAML de grille de paramètres |
+| `--metric` | `sharpe` | Critère d'optimisation : `sharpe` \| `return` \| `profit_factor` \| `win_rate` |
+| `--equity` | 10000 | Capital initial par fold (USD) |
+| `--output` | — | Chemin CSV pour sauvegarder les résultats fold par fold |
+
+### Grilles disponibles
+
+| Fichier | Stratégie | Combinaisons |
+|---------|-----------|-------------|
+| `config/param_grids/rsi_mean_reversion.yaml` | RSI Mean Reversion | 81 |
+| `config/param_grids/bollinger_bands.yaml` | Bollinger Bands MR | 81 |
+| `config/param_grids/macd_crossover.yaml` | MACD Crossover | 24 |
+| `config/param_grids/adx_ema_trend.yaml` | ADX + EMA Trend | 54 |
+
+### Exemple de sortie
+
+```
+Strategy : rsi_mean_reversion  |  Symbol : SPY
+Metric   : sharpe  |  Combinations : 81
+IS=252d  OOS=63d  step=63d
+
+Fetched 19 873 bars.
+Walk-forward windows : 9
+
+  #  IS-start    IS-end      OOS-start   OOS-end       IS-sharpe     OOS-sharpe  Trades    OOS-PnL ($)  Best params
+--------------------------------------------------------------------------------------------------------------------
+  1  2022-01-01  2022-12-31  2023-01-01  2023-03-31         1.8240         0.9130       8        +62.40  rsi_period=14  oversold=30  overbought=70  stop_loss_pct=2.0
+  2  2022-04-01  2023-03-31  2023-04-01  2023-06-30         2.1050         1.1200       6        +41.20  rsi_period=10  oversold=25  overbought=65  stop_loss_pct=1.5
+  …
+
+==============================
+RÉSUMÉ — 9 fold(s)
+  OOS sharpe moyen  : 0.9847
+  OOS PnL total     : $387.50
+  OOS trades total  : 61
+  Folds profitables : 7/9
+==============================
+```
+
+### Interpréter les résultats
+
+- **IS metric >> OOS metric** → overfitting probable sur la fenêtre IS.
+  Réduire la taille de la grille ou augmenter la fenêtre IS.
+- **Folds profitables < 50 %** → la stratégie n'est pas robuste sur ce
+  symbole/timeframe. Ne pas déployer.
+- **OOS PnL total > 0 et Sharpe OOS > 0,5** → seuil minimal acceptable
+  avant de passer en paper trading.
+
+### Créer sa propre grille
+
+```yaml
+# config/param_grids/ma_crossover.yaml
+param_grid:
+  fast_window:   [5, 10, 20]
+  slow_window:   [50, 100, 200]
+  stop_loss_pct: [1.0, 2.0, 3.0]
+```
+
+Chaque clé doit correspondre exactement au nom d'un paramètre lu par
+`generate_signal()` via `ctx.params.get("clé", défaut)`.
+Le produit cartésien est calculé automatiquement.

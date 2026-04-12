@@ -246,6 +246,16 @@ appelle l'endpoint `/clock` d'Alpaca au début de chaque tick.
 
 ## I
 
+### In-Sample / Out-of-Sample (IS / OOS)
+Partition des données historiques utilisée lors de l'optimisation walk-forward.
+
+- **In-Sample (IS)** : données sur lesquelles la recherche de paramètres est
+  effectuée. Le modèle est « vu » sur ces données.
+- **Out-of-Sample (OOS)** : données postérieures à l'IS, inconnues lors de
+  l'optimisation. Sert à mesurer la capacité de généralisation réelle.
+
+Un écart important entre les performances IS et OOS signale un **overfitting**.
+
 ### Idempotent (idempotent)
 Propriété d'une opération qui produit le même résultat qu'on l'appelle une ou
 plusieurs fois. Dans le bot : chaque `OrderRequest` a un `client_order_id` UUID
@@ -352,6 +362,12 @@ acheté des actions et ne les a pas encore revendues.
 Nombre maximum d'ordres qu'une stratégie peut soumettre par minute. Évite
 le spam d'ordres en cas de bug ou de signal répétitif. Configurable via
 `max_orders_per_minute` dans le YAML.
+
+### Overfitting (surapprentissage)
+Défaut d'un modèle ou d'une stratégie qui a été **trop ajusté** aux données
+historiques : il reproduit parfaitement le passé mais échoue sur les données
+nouvelles. Symptômes : Sharpe IS très élevé, Sharpe OOS proche de zéro.
+Remède : walk-forward, réduction de la grille de paramètres, plus de données.
 
 ### Overtrading (surtrading)
 Trop de trades en trop peu de temps. Coûteux en frais, souvent dû à des
@@ -533,6 +549,24 @@ faux breakouts sur faible liquidité.
 ---
 
 ## W
+
+### Walk-Forward (optimisation glissante)
+Méthode d'optimisation des paramètres d'une stratégie qui **évite l'overfitting**
+en répétant le processus sur des fenêtres glissantes :
+
+1. **In-sample (IS)** : grid search sur une fenêtre passée → meilleurs paramètres.
+2. **Out-of-sample (OOS)** : test des meilleurs paramètres IS sur la fenêtre
+   suivante (données inconnues lors de l'optimisation).
+3. La fenêtre avance d'un `step` et le cycle recommence.
+
+```
+IS 1 ──────────│ OOS 1 ───│
+     IS 2 ─────────────│ OOS 2 ───│
+          IS 3 ──────────────────│ OOS 3 ───│
+```
+
+La performance **OOS agrégée** est une estimation réaliste de ce que la
+stratégie aurait réalisé en production. Script : `scripts/run_walk_forward.py`.
 
 ### Whipsaw (coup de fouet)
 Série de faux signaux alternés BUY/SELL rapprochés, souvent causée par un

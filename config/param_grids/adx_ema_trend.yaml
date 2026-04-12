@@ -1,0 +1,12 @@
+# Grille de paramètres — ADX + EMA Trend
+# Utilisée par scripts/run_walk_forward.py
+#
+# Contrainte : ema_fast doit être < ema_slow (vérifiée par validate_params).
+# Les paires (8,30), (8,50), (12,30), (12,50), (20,30), (20,50) sont valides.
+#
+# Total : 3 × 2 × 3 × 3 = 54 combinaisons
+param_grid:
+  ema_fast:      [8, 12, 20]
+  ema_slow:      [30, 50]
+  adx_threshold: [20.0, 25.0, 30.0]
+  stop_loss_pct: [1.5, 2.0, 3.0]

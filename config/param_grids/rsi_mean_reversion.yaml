@@ -1,0 +1,13 @@
+# Grille de paramètres — RSI Mean Reversion
+# Utilisée par scripts/run_walk_forward.py
+#
+# Chaque clé correspond à un paramètre de la stratégie.
+# Chaque valeur est une liste : le produit cartésien de toutes les listes
+# donne l'ensemble des combinaisons testées en in-sample.
+#
+# Total : 3 × 3 × 3 × 3 = 81 combinaisons
+param_grid:
+  rsi_period:   [10, 14, 20]
+  oversold:     [25, 30, 35]
+  overbought:   [65, 70, 75]
+  stop_loss_pct: [1.5, 2.0, 3.0]
