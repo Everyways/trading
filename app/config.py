@@ -5,8 +5,6 @@ All secrets come from the environment. No hardcoded values.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -37,8 +35,8 @@ class GlobalSettings(BaseSettings):
     dashboard_password: str = Field(...)
 
     # --- Telegram ---
-    telegram_bot_token: Optional[str] = Field(default=None)
-    telegram_chat_id_global: Optional[str] = Field(default=None)
+    telegram_bot_token: str | None = Field(default=None)
+    telegram_chat_id_global: str | None = Field(default=None)
 
     # --- Trading safety ---
     allow_live_on_laptop: bool = Field(
@@ -81,7 +79,7 @@ class GlobalSettings(BaseSettings):
 
 
 # Lazily instantiated — callers import get_settings() to avoid import-time side effects.
-_settings: Optional[GlobalSettings] = None
+_settings: GlobalSettings | None = None
 
 
 def get_settings() -> GlobalSettings:
