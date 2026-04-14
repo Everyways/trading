@@ -2,11 +2,12 @@
 trading_routines — Automated trading intelligence briefings.
 
 Runs weekly/monthly/quarterly research routines via the Anthropic API with
-web search enabled, saves markdown reports, and notifies Telegram.
+web search enabled, adaptive thinking, prompt caching, and streaming output.
+Saves markdown reports and notifies Telegram.
 
 Designed to run as a long-lived service (APScheduler) or as a one-shot CLI:
 
-    python trading_routines.py run weekly            # manual trigger
+    python trading_routines.py run weekly            # manual trigger (streams to stdout)
     python trading_routines.py run monthly
     python trading_routines.py run quarterly
     python trading_routines.py schedule              # start scheduler daemon
@@ -16,12 +17,11 @@ Designed to run as a long-lived service (APScheduler) or as a one-shot CLI:
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING
 
 import httpx
 import yaml
@@ -32,6 +32,8 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -43,8 +45,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     anthropic_api_key: str = Field(..., alias="ANTHROPIC_API_KEY")
-    anthropic_model: str = Field(default="claude-sonnet-4-6", alias="ANTHROPIC_MODEL")
-    max_tokens: int = Field(default=8192, alias="MAX_TOKENS")
+    anthropic_model: str = Field(default="claude-opus-4-6", alias="ANTHROPIC_MODEL")
+    max_tokens: int = Field(default=16000, alias="MAX_TOKENS")
     max_web_searches: int = Field(default=10, alias="MAX_WEB_SEARCHES")
 
     telegram_bot_token: str | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
@@ -53,6 +55,9 @@ class Settings(BaseSettings):
     reports_dir: Path = Field(default=Path("reports"), alias="REPORTS_DIR")
     config_file: Path = Field(default=Path("config.yaml"), alias="CONFIG_FILE")
     prompts_dir: Path = Field(default=Path("prompts"), alias="PROMPTS_DIR")
+    system_prompt_file: Path = Field(
+        default=Path("prompts/system.md"), alias="SYSTEM_PROMPT_FILE"
+    )
 
     timezone: str = Field(default="Europe/Paris", alias="TIMEZONE")
 
@@ -64,10 +69,14 @@ class Settings(BaseSettings):
 class RoutineConfig(BaseModel):
     name: str                           # "weekly" | "monthly" | "quarterly"
     enabled: bool = True
-    cron: str                           # APScheduler cron expression (day_of_week, day, etc.)
+    cron: str                           # APScheduler cron expression (5-field)
     prompt_file: str                    # relative to prompts_dir
     telegram_summary: bool = True       # send a summary to Telegram
     summary_max_chars: int = 1500
+    # Claude API tuning — per-routine overrides
+    model: str | None = None            # None → settings.anthropic_model
+    thinking_enabled: bool = True       # enable adaptive thinking
+    effort: str = "high"               # low | medium | high | max
 
 
 @dataclass(slots=True)
@@ -79,22 +88,41 @@ class BriefingResult:
     report_path: Path
     token_usage: dict
     success: bool
+    model_used: str = ""
     error: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Briefer: calls Claude API with web_search
+# Briefer: calls Claude API with web_search, adaptive thinking, prompt caching
 # ---------------------------------------------------------------------------
 
 class Briefer:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = Anthropic(api_key=settings.anthropic_api_key)
+        self._system_prompt: str | None = self._load_system_prompt()
 
-    def run_routine(self, routine: RoutineConfig) -> BriefingResult:
-        """Synchronous call — the Anthropic SDK handles the heavy lifting."""
-        started_at = datetime.now(timezone.utc)
-        logger.info(f"Starting routine: {routine.name}")
+    def _load_system_prompt(self) -> str | None:
+        path = self.settings.system_prompt_file
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            logger.info(f"System prompt loaded: {path} ({len(content):,} chars)")
+            return content
+        logger.warning(f"System prompt not found: {path} — prompt caching disabled")
+        return None
+
+    def run_routine(
+        self,
+        routine: RoutineConfig,
+        on_text_chunk: Callable[[str], None] | None = None,
+    ) -> BriefingResult:
+        """Synchronous streaming call with adaptive thinking and prompt caching."""
+        started_at = datetime.now(UTC)
+        model = routine.model or self.settings.anthropic_model
+        logger.info(
+            f"Starting routine: {routine.name} | model={model} | "
+            f"effort={routine.effort} | thinking={routine.thinking_enabled}"
+        )
 
         prompt_path = self.settings.prompts_dir / routine.prompt_file
         if not prompt_path.exists():
@@ -103,22 +131,44 @@ class Briefer:
         prompt = prompt_path.read_text(encoding="utf-8")
         prompt = self._inject_context(prompt, routine)
 
+        # Build optional kwargs — omit keys that are not needed
+        extra: dict = {}
+        if self._system_prompt:
+            extra["system"] = [
+                {
+                    "type": "text",
+                    "text": self._system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        if routine.thinking_enabled:
+            extra["thinking"] = {"type": "adaptive"}
+
         try:
-            response = self.client.messages.create(
-                model=self.settings.anthropic_model,
+            text_parts: list[str] = []
+            with self.client.messages.stream(
+                model=model,
                 max_tokens=self.settings.max_tokens,
+                output_config={"effort": routine.effort},
                 tools=[
                     {
-                        "type": "web_search_20250305",
+                        "type": "web_search_20260209",
                         "name": "web_search",
                         "max_uses": self.settings.max_web_searches,
                     }
                 ],
                 messages=[{"role": "user", "content": prompt}],
-            )
+                **extra,
+            ) as stream:
+                for chunk in stream.text_stream:  # auto-skips thinking blocks
+                    text_parts.append(chunk)
+                    if on_text_chunk:
+                        on_text_chunk(chunk)
+                response = stream.get_final_message()
+
         except Exception as e:
             logger.exception(f"API call failed for routine {routine.name}")
-            finished_at = datetime.now(timezone.utc)
+            finished_at = datetime.now(UTC)
             return BriefingResult(
                 routine=routine.name,
                 started_at=started_at,
@@ -127,31 +177,49 @@ class Briefer:
                 report_path=Path(),
                 token_usage={},
                 success=False,
+                model_used=model,
                 error=str(e),
             )
 
-        # Extract text blocks from the response (ignore tool_use/tool_result blocks)
-        text_parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
-        report_md = "\n\n".join(text_parts).strip()
+        report_md = "".join(text_parts).strip()
+        finished_at = datetime.now(UTC)
 
-        finished_at = datetime.now(timezone.utc)
+        usage = response.usage
         token_usage = {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
         }
+        cache_hit = token_usage["cache_read_input_tokens"] > 0
+        duration = (finished_at - started_at).total_seconds()
+
         logger.info(
             f"Routine {routine.name} complete — "
-            f"{token_usage['input_tokens']} in / {token_usage['output_tokens']} out tokens"
+            f"{token_usage['input_tokens']:,} in / {token_usage['output_tokens']:,} out | "
+            f"cache write={token_usage['cache_creation_input_tokens']:,} "
+            f"read={token_usage['cache_read_input_tokens']:,} "
+            f"({'HIT' if cache_hit else 'MISS'}) | {duration:.1f}s"
         )
 
-        # Prepend metadata header
+        cache_stats = ""
+        if token_usage["cache_creation_input_tokens"] or token_usage["cache_read_input_tokens"]:
+            cache_stats = (
+                f" | cache write: {token_usage['cache_creation_input_tokens']:,}"
+                f" / read: {token_usage['cache_read_input_tokens']:,}"
+            )
+
         header = (
             f"# {routine.name.capitalize()} Trading Briefing\n\n"
             f"**Generated**: {finished_at.isoformat()}\n"
-            f"**Model**: {self.settings.anthropic_model}\n"
-            f"**Duration**: {(finished_at - started_at).total_seconds():.1f}s\n"
-            f"**Tokens**: {token_usage['input_tokens']} in / {token_usage['output_tokens']} out\n\n"
-            f"---\n\n"
+            f"**Model**: {model}\n"
+            f"**Effort**: {routine.effort}"
+            + (" | **Thinking**: adaptive" if routine.thinking_enabled else "")
+            + f"\n**Duration**: {duration:.1f}s\n"
+            f"**Tokens**: {token_usage['input_tokens']:,} in "
+            f"/ {token_usage['output_tokens']:,} out"
+            + cache_stats
+            + "\n\n---\n\n"
         )
         report_md = header + report_md
 
@@ -165,11 +233,12 @@ class Briefer:
             report_path=report_path,
             token_usage=token_usage,
             success=True,
+            model_used=model,
         )
 
     def _inject_context(self, prompt: str, routine: RoutineConfig) -> str:
         """Replace {{TODAY}} and {{ROUTINE}} placeholders."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         return prompt.replace("{{TODAY}}", today).replace("{{ROUTINE}}", routine.name)
 
     def _save_report(self, routine_name: str, ts: datetime, content: str) -> Path:
@@ -186,13 +255,15 @@ class Briefer:
 # ---------------------------------------------------------------------------
 
 class TelegramNotifier:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.enabled = bool(settings.telegram_bot_token and settings.telegram_chat_id)
         if not self.enabled:
             logger.warning("Telegram not configured — notifications disabled")
 
-    async def send_briefing_notification(self, result: BriefingResult, routine: RoutineConfig) -> None:
+    async def send_briefing_notification(
+        self, result: BriefingResult, routine: RoutineConfig
+    ) -> None:
         if not self.enabled or not routine.telegram_summary:
             return
 
@@ -203,20 +274,24 @@ class TelegramNotifier:
                 f"Timestamp: {result.finished_at.isoformat()}"
             )
         else:
-            # Extract first lines of report as summary (skip metadata header)
             lines = result.report_md.split("\n")
             body_start = next(
-                (i for i, l in enumerate(lines) if l.startswith("---")), 0
+                (i for i, line in enumerate(lines) if line.startswith("---")), 0
             ) + 2
             summary = "\n".join(lines[body_start : body_start + 20])
             if len(summary) > routine.summary_max_chars:
                 summary = summary[: routine.summary_max_chars] + "…"
+
+            cache_note = ""
+            if result.token_usage.get("cache_read_input_tokens", 0) > 0:
+                cache_note = " 💾 cache hit"
 
             text = (
                 f"📊 [TRADING-ROUTINES] {result.routine}\n\n"
                 f"{summary}\n\n"
                 f"📄 Full report: {result.report_path.name}\n"
                 f"🕐 {result.finished_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                + cache_note
             )
 
         url = f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage"
@@ -240,7 +315,7 @@ class TelegramNotifier:
 # ---------------------------------------------------------------------------
 
 class RoutineOrchestrator:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.briefer = Briefer(settings)
         self.notifier = TelegramNotifier(settings)
@@ -257,15 +332,18 @@ class RoutineOrchestrator:
         logger.info(f"Loaded {len(routines)} routine(s): {list(routines.keys())}")
         return routines
 
-    async def run(self, routine_name: str) -> BriefingResult:
+    async def run(
+        self,
+        routine_name: str,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> BriefingResult:
         if routine_name not in self.routines:
             raise KeyError(f"Unknown routine: {routine_name}. Available: {list(self.routines)}")
         routine = self.routines[routine_name]
         if not routine.enabled:
             logger.warning(f"Routine {routine_name} is disabled — running anyway (manual trigger)")
 
-        # Run the sync briefer in a thread so we don't block the event loop
-        result = await asyncio.to_thread(self.briefer.run_routine, routine)
+        result = await asyncio.to_thread(self.briefer.run_routine, routine, stream_callback)
         await self.notifier.send_briefing_notification(result, routine)
         return result
 
@@ -287,14 +365,13 @@ class RoutineOrchestrator:
                 args=[routine.name],
                 id=routine.name,
                 name=f"routine:{routine.name}",
-                misfire_grace_time=3600,  # allow 1h grace on missed runs
+                misfire_grace_time=3600,
             )
             logger.info(f"Scheduled routine '{routine.name}' with cron: {routine.cron}")
 
         scheduler.start()
         logger.info("Scheduler started. Waiting for triggers... (Ctrl-C to stop)")
 
-        # Block forever
         try:
             while True:
                 await asyncio.sleep(3600)
@@ -327,29 +404,36 @@ async def _main_async(argv: list[str]) -> int:
             print(f"Available: {[r.name for r in orchestrator.list_routines()]}")
             return 1
         routine_name = argv[2]
-        result = await orchestrator.run(routine_name)
+
+        def on_chunk(text: str) -> None:
+            print(text, end="", flush=True)
+
+        result = await orchestrator.run(routine_name, stream_callback=on_chunk)
         if result.success:
-            print(f"\n✅ Report saved: {result.report_path}")
+            print(f"\n\n✅ Report saved: {result.report_path}")
             print(f"Tokens: {result.token_usage}")
             return 0
-        else:
-            print(f"\n❌ Routine failed: {result.error}")
-            return 1
+        print(f"\n❌ Routine failed: {result.error}")
+        return 1
 
-    elif command == "schedule":
+    if command == "schedule":
         await orchestrator.schedule_forever()
         return 0
 
-    elif command == "list":
+    if command == "list":
         print("Configured routines:")
         for r in orchestrator.list_routines():
             status = "✅" if r.enabled else "⏸️ "
-            print(f"  {status} {r.name:12}  cron: {r.cron}  prompt: {r.prompt_file}")
+            model_label = r.model or settings.anthropic_model
+            print(
+                f"  {status} {r.name:12}  cron: {r.cron:20}  "
+                f"effort: {r.effort:6}  thinking: {r.thinking_enabled}  "
+                f"model: {model_label}  prompt: {r.prompt_file}"
+            )
         return 0
 
-    else:
-        _print_usage()
-        return 1
+    _print_usage()
+    return 1
 
 
 def main() -> None:

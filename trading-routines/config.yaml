@@ -5,6 +5,12 @@
 #
 # Day of week : 0=Monday ... 6=Sunday
 # Timezone is defined via TIMEZONE env var (default Europe/Paris)
+#
+# Claude API tuning fields (per routine):
+#   model           : optional override (default: ANTHROPIC_MODEL env var = claude-opus-4-6)
+#   thinking_enabled: enable adaptive thinking (default: true)
+#   effort          : output_config effort level — low | medium | high | max (default: high)
+#                     "max" is Opus 4.6 only; scales thinking depth and token spend
 
 routines:
 
@@ -14,6 +20,8 @@ routines:
     prompt_file: weekly.md
     telegram_summary: true
     summary_max_chars: 1500
+    thinking_enabled: true
+    effort: medium                  # News aggregation — speed > depth
 
   - name: monthly
     enabled: true
@@ -21,6 +29,8 @@ routines:
     prompt_file: monthly.md
     telegram_summary: true
     summary_max_chars: 2000
+    thinking_enabled: true
+    effort: high                    # Moderate analysis depth
 
   - name: quarterly
     enabled: true
@@ -28,3 +38,5 @@ routines:
     prompt_file: quarterly.md
     telegram_summary: true
     summary_max_chars: 2500
+    thinking_enabled: true
+    effort: max                     # Deep broker/tax/strategy analysis (Opus 4.6 only)
