@@ -22,7 +22,7 @@ params:
   ema_fast: 20          # Fast EMA period
   ema_slow: 50          # Slow EMA period
   adx_period: 14        # ADX / DI smoothing period (Wilder standard = 14)
-  adx_threshold: 25.0   # Minimum ADX to allow signal (< 20 = range, > 25 = trend)
+  adx_threshold: 20.0   # Minimum ADX to allow signal (< 20 = range, > 25 = strong trend)
   stop_loss_pct: 2.0    # Stop-loss in % below entry
   take_profit_pct: 5.0  # Take-profit in % above entry (bracket order)
 

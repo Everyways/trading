@@ -205,7 +205,7 @@ class TradingRunner:
         self._positions_liquidated = False
 
         if not await self._market_is_open():
-            log.debug("Market closed — skipping tick")
+            log.info("Market closed — skipping tick")
             return
 
         log.info("--- Tick %s ---", datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M UTC"))
@@ -337,11 +337,13 @@ class TradingRunner:
             df = _candles_to_df(raw_candles)
 
             if len(df) < cfg.lookback:
-                log.debug(
+                log.info(
                     "%s/%s: only %d candles (need %d) — skipping",
                     cfg.name, symbol, len(df), cfg.lookback,
                 )
                 return
+
+            log.info("%s/%s: %d candles fetched", cfg.name, symbol, len(df))
 
             # 2. Get account state
             account = await self._provider.get_account()
@@ -371,6 +373,7 @@ class TradingRunner:
             # 4. Generate signal
             signal = strategy.generate_signal(df, ctx)
             if signal is None:
+                log.debug("%s/%s: no signal this bar", cfg.name, symbol)
                 return
 
             log.info("Signal: %s %s %s — %s", cfg.name, symbol, signal.side.value, signal.reason)
