@@ -53,6 +53,17 @@ class GlobalSettings(BaseSettings):
         alias="TRADING_BOT_PANIC",
         description="Engage global kill switch immediately on boot.",
     )
+    live_trading_enabled: bool = Field(
+        default=False,
+        alias="TRADING_BOT_LIVE_ENABLED",
+        description="Must be true to allow any strategy with mode=live to start.",
+    )
+    kill_switch_file: str = Field(
+        default="KILL",
+        alias="TRADING_BOT_KILL_FILE",
+        description="Path to the emergency-stop sentinel file. If it exists at tick time, "
+        "the global kill switch is engaged immediately.",
+    )
 
     # --- Paths ---
     data_dir: str = Field(default="./data")

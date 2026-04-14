@@ -204,6 +204,38 @@ class RiskManager:
             self._state(strategy_name).paused_today = True
             log.warning("Strategy kill switch: %s — %s", strategy_name, reason)
 
+    def reset_kill_switch(self, reason: str = "", reset_by: str = "operator") -> None:
+        """Reset the global kill switch. Clears in-memory flag and persists to DB.
+
+        IMPORTANT: After reset, the bot can process ticks again immediately.
+        The caller is responsible for verifying it is safe to resume trading.
+        """
+        if not self._global_kill:
+            log.info("Kill switch reset requested but switch is not engaged — no-op")
+            return
+        self._global_kill = False
+        full_reason = f"RESET by {reset_by}: {reason}" if reason else f"RESET by {reset_by}"
+        log.critical("GLOBAL KILL SWITCH RESET — %s", full_reason)
+        self._log_risk_event(
+            event_type=RiskEventType.KILL_SWITCH_ENGAGED,
+            severity=RiskSeverity.WARNING,
+            scope="global",
+            message=full_reason,
+        )
+        try:
+            stmt = select(KillSwitchModel).where(
+                KillSwitchModel.scope == "global",
+                KillSwitchModel.strategy_id == None,  # noqa: E711
+            )
+            existing = self._session.exec(stmt).first()
+            if existing:
+                existing.engaged = False
+                existing.reason = full_reason
+                self._session.add(existing)
+                self._session.commit()
+        except Exception:
+            log.exception("Failed to persist kill switch reset to DB")
+
     def is_halted(self, strategy_name: str | None = None) -> bool:
         """True if global kill or (strategy_name provided) strategy is paused."""
         if self._global_kill:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import select
 
 from app.web.auth import require_auth
@@ -88,3 +89,39 @@ def status(_: str = Depends(require_auth)) -> dict[str, Any]:
         result["error"] = str(exc)
 
     return result
+
+
+@router.post("/stop")
+def emergency_stop(reason: str = "API /stop", _: str = Depends(require_auth)) -> dict[str, str]:
+    """Engage the emergency stop: creates the KILL sentinel file.
+
+    The trading runner checks for this file on every tick and engages the
+    global kill switch immediately. Positions are liquidated on next tick.
+    """
+    from app.config import get_settings
+    kill_file = Path(get_settings().kill_switch_file)
+    kill_file.touch()
+    return {"status": "stopped", "kill_file": str(kill_file), "reason": reason}
+
+
+@router.post("/resume")
+def emergency_resume(_: str = Depends(require_auth)) -> dict[str, str]:
+    """Reset the emergency stop: deletes the KILL sentinel file.
+
+    The in-memory kill switch is NOT reset here — only the file is removed.
+    Use the Telegram /resume command or restart the process to clear the
+    in-memory flag after verifying it is safe to resume trading.
+    """
+    from app.config import get_settings
+    kill_file = Path(get_settings().kill_switch_file)
+    if not kill_file.exists():
+        raise HTTPException(
+            status_code=409,
+            detail="KILL file does not exist — bot is not stopped via file",
+        )
+    kill_file.unlink()
+    return {
+        "status": "file_removed",
+        "kill_file": str(kill_file),
+        "note": "Send /resume via Telegram to also reset the in-memory kill switch",
+    }
