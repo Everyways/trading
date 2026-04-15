@@ -210,5 +210,7 @@ def _load_dashboard_data() -> dict[str, Any]:
 def dashboard(request: Request, _: str = Depends(require_auth)) -> HTMLResponse:
     data = _load_dashboard_data()
     return _templates.TemplateResponse(
-        "dashboard.html", {"request": request, **data}
+        request=request,
+        name="dashboard.html",
+        context=data
     )
