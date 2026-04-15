@@ -144,7 +144,20 @@ class AlpacaProvider(BrokerProvider):
         raw = await asyncio.to_thread(self._client.get_order_by_id, broker_order_id)
         return order_to_ack(raw)
 
-  # ------------------------------------------------------------------
+    async def list_open_orders(self, symbol: str | None = None) -> list[OrderAck]:
+        """Return all open/pending orders, optionally filtered by symbol."""
+        assert self._client is not None, "Call connect() first"
+        from alpaca.trading.requests import GetOrdersRequest
+
+        req = GetOrdersRequest(
+            status="open",
+            symbols=[symbol] if symbol else None,
+            limit=100,
+        )
+        raw_list = await asyncio.to_thread(self._client.get_orders, filter=req)
+        return [order_to_ack(o) for o in raw_list]
+
+    # ------------------------------------------------------------------
     # Historical data
     # ------------------------------------------------------------------
 

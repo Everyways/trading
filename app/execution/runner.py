@@ -14,9 +14,11 @@ minutes 0, 15, 30, 45 in the America/New_York timezone.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 
     from app.execution.strategy_loader import StrategyConfig
     from app.notifications.telegram import TelegramNotifier
+    from app.notifications.telegram_commands import TelegramCommandBot
     from app.providers.base import BrokerProvider
     from app.risk.manager import RiskManager
     from app.strategies.base import Strategy
@@ -94,6 +97,8 @@ class TradingRunner:
         session: Session,
         global_config: dict[str, Any] | None = None,
         notifier: TelegramNotifier | None = None,
+        command_bot: TelegramCommandBot | None = None,
+        kill_file: Path = Path("KILL"),
     ) -> None:
         self._provider = provider
         self._cfgs = strategy_configs
@@ -101,6 +106,8 @@ class TradingRunner:
         self._session = session
         self._global_config = global_config or {}
         self._notifier = notifier
+        self._command_bot = command_bot
+        self._kill_file = kill_file
 
         # In-memory entry-time registry: symbol → UTC datetime of last BUY fill.
         # Used to detect same-session round-trips (day trades) for PDT tracking.
@@ -137,6 +144,7 @@ class TradingRunner:
             return
 
         await self._provider.connect()
+        await self._seed_position_entry_times()
         strategy_names = [c.name for c in self._cfgs if c.name in self._strategies]
         log.info(
             "Connected to %s. Starting scheduler with %d strategy/symbol pair(s).",
@@ -171,12 +179,23 @@ class TradingRunner:
         )
         scheduler.start()
 
+        command_bot_task: asyncio.Task | None = None
+        if self._command_bot:
+            command_bot_task = asyncio.create_task(
+                self._command_bot.run(), name="telegram-cmd-bot"
+            )
+            log.info("Telegram command bot task started")
+
         try:
             await asyncio.Event().wait()   # run forever
         except (KeyboardInterrupt, SystemExit):
             log.info("Shutdown requested")
         finally:
             scheduler.shutdown(wait=False)
+            if command_bot_task is not None:
+                command_bot_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await command_bot_task
             await self._provider.disconnect()
 
     async def run_once(self) -> None:
@@ -193,6 +212,11 @@ class TradingRunner:
 
     async def _tick(self) -> None:
         """One evaluation cycle: called at each 15-minute bar close."""
+        # File-based kill switch: check the sentinel file every tick.
+        # Most reliable emergency stop — works even if the in-memory flag was reset.
+        if self._kill_file.exists():
+            self._risk.engage_kill_switch("global", reason="KILL file detected")
+
         if self._risk.is_halted():
             if not self._positions_liquidated:
                 log.warning("Kill switch engaged — liquidating all open positions")
@@ -220,6 +244,7 @@ class TradingRunner:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         await self._snapshot_positions()
+        await self._check_bracket_health()
 
     async def _snapshot_positions(self) -> None:
         """Write a PositionSnapshot record for every non-flat broker position."""
@@ -274,6 +299,95 @@ class TradingRunner:
             self._session.commit()
         except Exception:
             log.exception("Failed to write position snapshots")
+
+    async def _seed_position_entry_times(self) -> None:
+        """Populate the entry-time registry from live broker positions at startup.
+
+        Without this, PDT detection would miss round-trips opened before the
+        current process started (e.g. after a restart mid-session).
+        We don't know the exact fill time, so we use today's midnight UTC as a
+        conservative proxy — any same-day sell will still be flagged as a day trade.
+        """
+        try:
+            positions = await self._provider.get_positions()
+            now = datetime.now(tz=UTC)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            seeded = 0
+            for pos in positions:
+                if not pos.is_flat and pos.symbol not in self._position_entry_times:
+                    self._position_entry_times[pos.symbol] = today_start
+                    seeded += 1
+            if seeded:
+                log.info("Seeded entry times for %d open position(s) from broker", seeded)
+        except Exception:
+            log.exception("Failed to seed position entry times — PDT tracking may be incomplete")
+
+    async def _check_bracket_health(self) -> None:
+        """Verify that every open position has a protective stop order.
+
+        Bracket legs (stop-loss sell) can be silently cancelled by Alpaca after
+        certain events (e.g. partial fills, market halts). This watchdog re-places
+        an emergency stop-loss when the protective leg is missing.
+        """
+        try:
+            positions = await self._provider.get_positions()
+            open_pos = [p for p in positions if not p.is_flat]
+            if not open_pos:
+                return
+
+            for pos in open_pos:
+                cfg = next(
+                    (
+                        c for c in self._cfgs
+                        if any(e.symbol == pos.symbol for e in c.universe)
+                    ),
+                    None,
+                )
+                if cfg is None:
+                    continue
+
+                open_orders = await self._provider.list_open_orders(symbol=pos.symbol)
+                has_stop = any(
+                    o.side == OrderSide.SELL
+                    and o.type in (OrderType.STOP, OrderType.STOP_LIMIT)
+                    for o in open_orders
+                )
+                if has_stop:
+                    continue
+
+                avg_entry = pos.avg_entry_price
+                if avg_entry <= 0:
+                    log.warning("Bracket watchdog: %s has no valid avg entry price", pos.symbol)
+                    continue
+
+                stop_loss_pct = float(cfg.params.get("stop_loss_pct", 2.0))
+                sl_price = (
+                    avg_entry * (1 - Decimal(str(stop_loss_pct)) / 100)
+                ).quantize(Decimal("0.01"))
+
+                log.warning(
+                    "Bracket watchdog: no stop order for %s — placing emergency stop @ %s",
+                    pos.symbol, sl_price,
+                )
+                emergency_order = OrderRequest(
+                    symbol=pos.symbol,
+                    side=OrderSide.SELL,
+                    type=OrderType.STOP,
+                    qty=abs(pos.qty),
+                    strategy_name="bracket_watchdog",
+                    stop_price=sl_price,
+                )
+                try:
+                    ack = await self._provider.submit_order(emergency_order)
+                    log.warning(
+                        "Emergency stop placed: %s qty=%s stop=%s → %s [%s]",
+                        pos.symbol, abs(pos.qty), sl_price,
+                        ack.status.value, ack.broker_order_id,
+                    )
+                except Exception:
+                    log.exception("Bracket watchdog: failed to place stop for %s", pos.symbol)
+        except Exception:
+            log.exception("Bracket health check failed")
 
     async def _liquidate_all_positions(self) -> None:
         """Emergency market-sell of every non-flat position (kill switch path)."""

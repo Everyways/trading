@@ -64,6 +64,10 @@ class BrokerProvider(ABC):
         """Retrieve the current state of an order."""
 
     @abstractmethod
+    async def list_open_orders(self, symbol: str | None = None) -> list[OrderAck]:
+        """Return all pending/open orders, optionally filtered by symbol."""
+
+    @abstractmethod
     async def get_historical_candles(
         self,
         symbol: str,
