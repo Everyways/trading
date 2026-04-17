@@ -106,7 +106,7 @@
   {% if recent_trades %}
   <table>
     <thead>
-      <tr><th>Time</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Duration</th></tr>
+      <tr><th>Closed</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Cumul PnL</th><th>Duration</th></tr>
     </thead>
     <tbody>
       {% for t in recent_trades %}
@@ -119,6 +119,7 @@
         <td>${{ t.entry_price }}</td>
         <td>${{ t.exit_price }}</td>
         <td class="{{ t.pnl_class }}">{{ t.pnl_fmt }}</td>
+        <td class="{{ t.cumulative_pnl_class }}">{{ t.cumulative_pnl_fmt }}</td>
         <td class="muted">{{ t.duration }}</td>
       </tr>
       {% endfor %}

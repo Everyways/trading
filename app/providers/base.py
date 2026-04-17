@@ -68,6 +68,18 @@ class BrokerProvider(ABC):
         """Return all pending/open orders, optionally filtered by symbol."""
 
     @abstractmethod
+    async def list_closed_orders(
+        self,
+        since: datetime,
+        symbol: str | None = None,
+    ) -> list[OrderAck]:
+        """Return filled/cancelled orders since the given timestamp.
+
+        Used for startup reconciliation: any fills that arrived while the
+        process was down are backfilled from this endpoint.
+        """
+
+    @abstractmethod
     async def get_historical_candles(
         self,
         symbol: str,
