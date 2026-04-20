@@ -77,27 +77,25 @@ def _load_dashboard_data() -> dict[str, Any]:
                 data["kill_switch"] = True
                 data["kill_switch_reason"] = ks.reason or ""
 
-            # ── Monthly loss (EUR) ────────────────────────────────────────
-            month_start = datetime.now(tz=UTC).replace(
-                day=1, hour=0, minute=0, second=0, microsecond=0
+            # ── Today's PnL (trades closed today) ────────────────────────
+            today_start = datetime.now(tz=UTC).replace(
+                hour=0, minute=0, second=0, microsecond=0
             )
+            today_closed = session.exec(
+                select(Trade).where(Trade.exit_time >= today_start)
+            ).all()
+            data["today_pnl"] = sum(float(t.pnl_net or 0) for t in today_closed)
+            data["today_trades"] = len(today_closed)
+
+            # ── Monthly loss (EUR) — trades closed this month ─────────────
+            month_start = today_start.replace(day=1)
             monthly_trades = session.exec(
-                select(Trade).where(Trade.entry_time >= month_start)
+                select(Trade).where(Trade.exit_time >= month_start)
             ).all()
             monthly_pnl = sum(float(t.pnl_net or 0) for t in monthly_trades)
             eur_per_usd = 0.92
             if monthly_pnl < 0:
                 data["monthly_loss_eur"] = abs(monthly_pnl) * eur_per_usd
-
-            # ── Today's PnL ───────────────────────────────────────────────
-            today_start = datetime.now(tz=UTC).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            today_trades = [
-                t for t in monthly_trades if t.entry_time and t.entry_time >= today_start
-            ]
-            data["today_pnl"] = sum(float(t.pnl_net or 0) for t in today_trades)
-            data["today_trades"] = len(today_trades)
 
             # ── Strategies ───────────────────────────────────────────────
             data["strategies"] = [
@@ -142,10 +140,18 @@ def _load_dashboard_data() -> dict[str, Any]:
                 })
             data["positions"] = positions
 
-            # ── Recent trades ─────────────────────────────────────────────
+            # ── Recent trades (with per-row cumulative PnL) ───────────────
             trades_db = session.exec(
-                select(Trade).order_by(Trade.entry_time.desc()).limit(30)
+                select(Trade).order_by(Trade.exit_time.desc()).limit(50)
             ).all()
+            # Compute running cumulative PnL oldest→newest, then reverse for display
+            pnl_values = [float(t.pnl_net or 0) for t in reversed(trades_db)]
+            cumulative: list[float] = []
+            running = 0.0
+            for v in pnl_values:
+                running += v
+                cumulative.append(running)
+            cumulative.reverse()   # align with newest-first order
             data["recent_trades"] = [
                 {
                     "strategy": strategy_map.get(t.strategy_id, "—"),
@@ -157,10 +163,12 @@ def _load_dashboard_data() -> dict[str, Any]:
                     "pnl": float(t.pnl_net or 0),
                     "pnl_fmt": _fmt(t.pnl_net),
                     "pnl_class": "pos" if (t.pnl_net or 0) > 0 else "neg",
+                    "cumulative_pnl_fmt": _fmt(cumulative[i]),
+                    "cumulative_pnl_class": "pos" if cumulative[i] >= 0 else "neg",
                     "duration": f"{(t.duration_seconds or 0) // 60}m",
-                    "time": t.entry_time.strftime("%m-%d %H:%M") if t.entry_time else "—",
+                    "time": t.exit_time.strftime("%m-%d %H:%M") if t.exit_time else "—",
                 }
-                for t in trades_db
+                for i, t in enumerate(trades_db)
             ]
 
             # ── Risk events ───────────────────────────────────────────────

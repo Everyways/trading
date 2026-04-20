@@ -67,6 +67,35 @@ class TelegramNotifier:
         text = f"\u26a0\ufe0f *Risk blocked* `{strategy}`\n`{reason}`"   # ⚠️
         await self._send(text)
 
+    async def notify_tick_summary(
+        self,
+        time_str: str,
+        total_pairs: int,
+        skipped_pairs: int,
+        no_signal_pairs: int,
+        notable_lines: list[str],
+    ) -> None:
+        """Per-tick digest: what was evaluated and why positions were or weren't taken."""
+        evaluated = total_pairs - skipped_pairs
+        header = f"\U0001f4cb *Tick \u2014 {time_str}*"   # 📋
+        if not notable_lines and no_signal_pairs == evaluated:
+            # Nothing interesting — one compact line
+            skip_note = f" \u00b7 {skipped_pairs} skipped" if skipped_pairs else ""
+            text = f"{header}\n{evaluated}/{total_pairs} pairs evaluated{skip_note} \u2014 no signals"
+        else:
+            parts = [header]
+            summary_parts = [f"{evaluated}/{total_pairs} pairs"]
+            if skipped_pairs:
+                summary_parts.append(f"{skipped_pairs} skipped \u26a0\ufe0f")
+            if no_signal_pairs:
+                summary_parts.append(f"{no_signal_pairs} no signal")
+            parts.append(" \u00b7 ".join(summary_parts))
+            if notable_lines:
+                parts.append("")
+                parts.extend(notable_lines)
+            text = "\n".join(parts)
+        await self._send(text)
+
     async def notify_kill_switch(self, scope: str, reason: str) -> None:
         """Critical alert when a kill switch engages."""
         text = (
@@ -128,6 +157,26 @@ class TelegramNotifier:
                 s = "+" if pnl >= 0 else ""
                 lines.append(f"  \u2022 `{name}` \u2014 {count} trade(s), `{s}${pnl:.2f}`")
         await self._send("\n".join(lines))
+
+    async def notify_trade_closed(
+        self,
+        symbol: str,
+        qty: Decimal,
+        entry_price: Decimal,
+        exit_price: Decimal,
+        pnl_net: Decimal,
+        strategy: str,
+    ) -> None:
+        """Alert when a round-trip trade closes, with entry/exit prices and net PnL."""
+        emoji = "\u2705" if pnl_net >= 0 else "\u274c"   # ✅ / ❌
+        sign = "+" if pnl_net >= 0 else ""
+        text = (
+            f"{emoji} *Trade closed* `{symbol}`\n"
+            f"entry=`{entry_price:.2f}` \u2192 exit=`{exit_price:.2f}`  qty=`{qty}`\n"
+            f"PnL: `{sign}${pnl_net:.2f}`\n"
+            f"strategy: `{strategy}`"
+        )
+        await self._send(text)
 
     async def notify_startup(self, strategies: list[str]) -> None:
         """Sent once when the paper trading runner starts."""

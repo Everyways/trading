@@ -157,6 +157,24 @@ class AlpacaProvider(BrokerProvider):
         raw_list = await asyncio.to_thread(self._client.get_orders, filter=req)
         return [order_to_ack(o) for o in raw_list]
 
+    async def list_closed_orders(
+        self,
+        since: datetime,
+        symbol: str | None = None,
+    ) -> list[OrderAck]:
+        """Return filled/cancelled orders since *since*, optionally filtered by symbol."""
+        assert self._client is not None, "Call connect() first"
+        from alpaca.trading.requests import GetOrdersRequest
+
+        req = GetOrdersRequest(
+            status="closed",
+            after=since,
+            symbols=[symbol] if symbol else None,
+            limit=500,
+        )
+        raw_list = await asyncio.to_thread(self._client.get_orders, filter=req)
+        return [order_to_ack(o) for o in raw_list]
+
     # ------------------------------------------------------------------
     # Historical data
     # ------------------------------------------------------------------
