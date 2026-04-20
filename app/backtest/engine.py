@@ -37,11 +37,14 @@ class BacktestResult:
     metrics: BacktestMetrics
     equity_curve: pd.Series          # float equity value at each evaluated bar
     trades: list[dict[str, Any]] = field(default_factory=list)
+    gross_sharpe: float = 0.0        # Sharpe before any costs (no slippage, no commission)
 
     def __str__(self) -> str:
+        drag = self.gross_sharpe - self.metrics.sharpe_ratio
         return (
             f"[{self.strategy_name}/{self.symbol}]  "
             f"{self.start.date()} → {self.end.date()}  {self.metrics}"
+            f"  Gross Sharpe: {self.gross_sharpe:.2f}  Cost drag: {drag:.2f}"
         )
 
 
@@ -63,10 +66,12 @@ class BacktestEngine:
         strategy: Strategy,
         initial_equity: Decimal = Decimal("10000"),
         commission_pct: float = 0.001,
+        slippage_bps: float = 0.0,
     ) -> None:
         self._strategy = strategy
         self._initial_equity = initial_equity
         self._commission_pct = commission_pct
+        self._slippage_bps = slippage_bps
 
     def run(
         self,
@@ -132,33 +137,40 @@ class BacktestEngine:
                 return raw.to_pydatetime()
             return datetime.now(tz=UTC)
 
+        slip_buy = 1.0 + self._slippage_bps / 10_000.0
+        slip_sell = 1.0 - self._slippage_bps / 10_000.0
+
         equity: float = float(self._initial_equity)
+        equity_gross: float = float(self._initial_equity)
         position: dict[str, Any] | None = None
         pending_entry: bool = False
         pending_exit: bool = False
         equity_values: list[float] = []
+        equity_gross_values: list[float] = []
         trades_list: list[dict[str, Any]] = []
 
         def _open_position(open_price: float, bar_idx: int) -> None:
             nonlocal position
+            fill_price = open_price * slip_buy
             qty = float(
                 size_position(
                     account_equity=Decimal(str(equity)),
-                    entry_price=Decimal(str(open_price)),
+                    entry_price=Decimal(str(fill_price)),
                     stop_loss_pct=stop_loss_pct,
                     risk_pct=risk_pct,
                 )
             )
             # entry_fee is stored here but charged at close (all fees realised together)
-            entry_fee = open_price * qty * self._commission_pct
-            stop_price = open_price * (1.0 - stop_loss_pct / 100.0)
+            entry_fee = fill_price * qty * self._commission_pct
+            stop_price = fill_price * (1.0 - stop_loss_pct / 100.0)
             tp_price: float | None = (
-                open_price * (1.0 + take_profit_pct / 100.0)
+                fill_price * (1.0 + take_profit_pct / 100.0)
                 if take_profit_pct > 0.0
                 else None
             )
             position = {
-                "entry_price": open_price,
+                "raw_entry_price": open_price,   # unadjusted price for gross P&L
+                "entry_price": fill_price,        # fill price with slippage
                 "qty": qty,
                 "stop": stop_price,
                 "take_profit": tp_price,
@@ -168,20 +180,27 @@ class BacktestEngine:
             }
 
         def _close_position(exit_price: float, bar_idx: int, reason: str) -> None:
-            nonlocal equity, position
+            nonlocal equity, equity_gross, position
             if position is None:
                 return
             qty = position["qty"]
-            pnl_gross = (exit_price - position["entry_price"]) * qty
-            exit_fee = exit_price * qty * self._commission_pct
-            pnl_net = pnl_gross - position["entry_fee"] - exit_fee
+            # Take-profit is a limit order — no slippage; all other exits are market orders.
+            fill_exit = exit_price if reason == "take_profit" else exit_price * slip_sell
+            pnl_gross = (exit_price - position["raw_entry_price"]) * qty
+            exit_fee = fill_exit * qty * self._commission_pct
+            pnl_net = (
+                (fill_exit - position["entry_price"]) * qty
+                - position["entry_fee"]
+                - exit_fee
+            )
             equity += pnl_net
+            equity_gross += pnl_gross
             trades_list.append(
                 {
                     "entry_time": position["entry_time"],
                     "exit_time": _bar_time(bar_idx),
                     "entry_price": position["entry_price"],
-                    "exit_price": exit_price,
+                    "exit_price": fill_exit,
                     "qty": qty,
                     "pnl_gross": pnl_gross,
                     "pnl_net": pnl_net,
@@ -258,9 +277,12 @@ class BacktestEngine:
             # 5. Record equity including unrealised mark-to-market on open position
             if position is not None:
                 unrealised = (bar_close - position["entry_price"]) * position["qty"]
+                unrealised_gross = (bar_close - position["raw_entry_price"]) * position["qty"]
                 equity_values.append(equity + unrealised)
+                equity_gross_values.append(equity_gross + unrealised_gross)
             else:
                 equity_values.append(equity)
+                equity_gross_values.append(equity_gross)
 
         # Close any position still open at end of data
         if position is not None:
@@ -268,13 +290,23 @@ class BacktestEngine:
             _close_position(last_close, len(df) - 1, "end_of_data")
             if equity_values:
                 equity_values[-1] = equity
+                equity_gross_values[-1] = equity_gross
 
         equity_curve = pd.Series(equity_values, dtype=float)
+        equity_curve_gross = pd.Series(equity_gross_values, dtype=float)
         trade_pnls = [Decimal(str(round(t["pnl_net"], 8))) for t in trades_list]
+        gross_pnls = [Decimal(str(round(t["pnl_gross"], 8))) for t in trades_list]
         holding_bars = [t["exit_bar"] - t["entry_bar"] for t in trades_list] or None
         metrics = compute_metrics(
             trade_pnls,
             equity_curve,
+            self._initial_equity,
+            holding_bars,
+            bars_per_year=bars_per_year,
+        )
+        metrics_gross = compute_metrics(
+            gross_pnls,
+            equity_curve_gross,
             self._initial_equity,
             holding_bars,
             bars_per_year=bars_per_year,
@@ -288,4 +320,5 @@ class BacktestEngine:
             metrics=metrics,
             equity_curve=equity_curve,
             trades=trades_list,
+            gross_sharpe=metrics_gross.sharpe_ratio,
         )
