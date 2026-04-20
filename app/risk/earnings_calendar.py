@@ -34,7 +34,7 @@ import yaml
 log = logging.getLogger(__name__)
 
 _CACHE_FILE = Path("data/earnings_cache.json")
-_OVERRIDE_FILE = Path("data/earnings_overrides.yaml")
+_OVERRIDE_FILE = Path("config/earnings_overrides.yaml")
 _CACHE_TTL_HOURS = 24
 _BLACKOUT_TRADING_DAYS = 2
 
