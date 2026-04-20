@@ -246,6 +246,12 @@ def order_to_ack(order: AlpacaOrder) -> OrderAck:
         order.side or AlpacaOrderSide.BUY, OrderSide.BUY
     )
 
+    stop_price = (
+        Decimal(str(order.stop_price))
+        if order.stop_price is not None
+        else None
+    )
+
     return OrderAck(
         client_order_id=order.client_order_id,
         broker_order_id=str(order.id),
@@ -256,6 +262,7 @@ def order_to_ack(order: AlpacaOrder) -> OrderAck:
         qty=qty,
         filled_qty=filled_qty,
         avg_fill_price=avg_fill_price,
+        stop_price=stop_price,
         submitted_at=order.submitted_at,
         filled_at=order.filled_at,
     )

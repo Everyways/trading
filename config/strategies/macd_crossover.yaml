@@ -25,6 +25,7 @@ params:
   min_histogram: 0.0    # Min absolute histogram to confirm crossover (0 = all)
   stop_loss_pct: 2.0    # Stop-loss in % below entry
   take_profit_pct: 4.0  # Take-profit in % above entry (bracket order)
+  trailing_stop_atr_multiplier: 2.5  # ATR-based trailing stop (ratchets up only)
 
 risk:
   max_risk_per_trade_pct: 1.0
@@ -37,3 +38,7 @@ risk:
 execution:
   order_type: market
   time_in_force: day
+
+favourable_regimes:
+  - trend_up
+  - trend_down

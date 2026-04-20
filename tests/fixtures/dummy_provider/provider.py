@@ -78,6 +78,9 @@ class DummyProvider(BrokerProvider):
     async def cancel_order(self, broker_order_id: str) -> None:
         pass
 
+    async def list_open_orders(self, symbol: str | None = None) -> list[OrderAck]:
+        return []
+
     async def get_order(self, broker_order_id: str) -> OrderAck:
         return OrderAck(
             client_order_id=str(uuid.uuid4()),

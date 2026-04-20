@@ -115,6 +115,7 @@ class OrderAck(BaseModel):
     qty: Decimal
     filled_qty: Decimal = Decimal("0")
     avg_fill_price: Decimal | None = None
+    stop_price: Decimal | None = None
     submitted_at: datetime | None = None
     filled_at: datetime | None = None
     error_message: str | None = None

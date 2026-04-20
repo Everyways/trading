@@ -37,6 +37,8 @@ class StrategyConfig:
     params: dict[str, Any]
     risk: dict[str, Any]
     execution: dict[str, Any] = field(default_factory=dict)
+    favourable_regimes: list[str] = field(default_factory=list)
+    # Empty list → gate disabled (runs in all regimes, backward-compatible default)
 
 
 def _resolve_universe(raw: dict[str, Any]) -> list[UniverseEntry]:
@@ -149,6 +151,9 @@ def load_strategy_configs(
                 params=raw.get("params", {}),
                 risk=raw.get("risk", {}),
                 execution=raw.get("execution", {}),
+                favourable_regimes=[
+                    str(r).lower() for r in raw.get("favourable_regimes", [])
+                ],
             )
         )
         log.info(

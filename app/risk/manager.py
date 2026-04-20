@@ -26,9 +26,10 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.core.domain import OrderRequest, Position
-from app.core.enums import RiskEventType, RiskSeverity
+from app.core.enums import OrderSide, RiskEventType, RiskSeverity
 from app.data.models import KillSwitch as KillSwitchModel
 from app.data.models import RiskEvent
+from app.risk.earnings_calendar import EarningsCalendar
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class RiskManager:
         self._daily_global_pnl: Decimal = Decimal("0")
         self._today: date = datetime.now(tz=UTC).date()
         self._states: dict[str, _StrategyState] = {}
+        self._earnings = EarningsCalendar()
 
         self._load_from_db()
 
@@ -162,6 +164,18 @@ class RiskManager:
         max_rate = int(strategy_risk.get("max_orders_per_minute", 5))
         if not self._under_rate_limit(state, max_rate):
             return False, f"{strategy_name}: order rate limit {max_rate}/min exceeded"
+
+        # 9. Earnings blackout — block BUY orders within 2 trading days of earnings.
+        #    SELL signals always pass so existing positions can be closed normally.
+        if order.side == OrderSide.BUY and self._earnings.is_blackout(order.symbol):
+            reason = f"{order.symbol}: earnings blackout active"
+            self._log_risk_event(
+                event_type=RiskEventType.DAILY_LOSS_LIMIT,
+                severity=RiskSeverity.INFO,
+                scope="strategy",
+                message=reason,
+            )
+            return False, reason
 
         return True, ""
 

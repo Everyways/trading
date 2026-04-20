@@ -12,7 +12,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from alpaca.data.historical import StockHistoricalDataClient
@@ -171,8 +171,8 @@ class AlpacaProvider(BrokerProvider):
         assert self._data_client is not None, "Call connect() first"
         
         # --- AJOUT POUR GÉRER LA LIMITE FREE SIP (15 min delay) ---
-        from datetime import timezone, timedelta
-        now_utc = datetime.now(timezone.utc)
+        from datetime import timedelta
+        now_utc = datetime.now(UTC)
         limit_sip = now_utc - timedelta(minutes=16)
         
         # Si la date de fin demandée est plus récente que la limite autorisée

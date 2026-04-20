@@ -85,6 +85,22 @@ grep -iE "failed to submit|rejected" logs/bot.log | tail -20
 
 Typical: insufficient buying power, after-hours without `extended_hours=True`, symbol not tradable, shorting restricted.
 
+### 9. Regime gate blocking strategies?
+
+```bash
+grep -E "Regime gate: skipping" logs/bot.log | tail -20
+grep -E "Market regime:" logs/bot.log | tail -5
+```
+
+If every strategy is regime-gated, the current market regime doesn't match any strategy's `favourable_regimes`. The log will show `regime=<current>` and each skip line shows which regimes are allowed.
+
+Fix options:
+- Wait for the regime to rotate (typical: a few days to weeks).
+- Add the current regime to the strategy's `favourable_regimes` list in its YAML if you believe the strategy has edge there.
+- Remove `favourable_regimes` entirely from a YAML to make that strategy run in all regimes (no gate).
+
+Regime classification uses SPY daily bars: 200-EMA direction + 14-ATR% tercile. Possible values: `trend_up`, `trend_down`, `chop`, `high_vol`.
+
 ## Output
 
 Deliver a short diagnosis (≤ 10 lines):
@@ -92,4 +108,4 @@ Deliver a short diagnosis (≤ 10 lines):
 2. A concrete fix (YAML line, command, or config change — not a vague suggestion)
 3. Which log line supports the diagnosis (quote one representative line)
 
-Never conclude "nothing is wrong" without walking all 8 checks. The whole point of this skill is to catch the silent failures.
+Never conclude "nothing is wrong" without walking all 9 checks. The whole point of this skill is to catch the silent failures.

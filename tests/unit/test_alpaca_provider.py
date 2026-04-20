@@ -70,6 +70,7 @@ def _mock_submitted_order(client_order_id: str):
     order.qty = "5"
     order.filled_qty = "0"
     order.filled_avg_price = None
+    order.stop_price = None
     order.submitted_at = NOW
     order.filled_at = None
     order.time_in_force = MagicMock()
