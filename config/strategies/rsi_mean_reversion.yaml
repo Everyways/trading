@@ -36,3 +36,6 @@ risk:
 execution:
   order_type: market
   time_in_force: day
+
+favourable_regimes:
+  - chop

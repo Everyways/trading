@@ -55,9 +55,16 @@ async def _run() -> None:
         sys.exit(1)
 
     kill_file = Path(s.kill_switch_file)
+    resume_file = Path(s.resume_switch_file)
     if kill_file.exists():
         log.critical("KILL file detected at startup: %s — remove it to start", kill_file)
         sys.exit(1)
+    # Clean up any leftover RESUME file from a previous session
+    if resume_file.exists():
+        try:
+            resume_file.unlink()
+        except OSError:
+            log.warning("Could not remove leftover RESUME file %s", resume_file)
 
     global_config = _load_global_risk()
 
@@ -117,6 +124,7 @@ async def _run() -> None:
             notifier=notifier,
             command_bot=command_bot,
             kill_file=kill_file,
+            resume_file=resume_file,
         )
         log.info("Starting continuous %s trading loop", mode_filter)
         await runner.run()

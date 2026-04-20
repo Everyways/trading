@@ -1,0 +1,4 @@
+# Manual earnings date overrides. Format:
+#   SYMBOL:
+#     - "YYYY-MM-DD"
+# Takes precedence over yfinance. Updated by the quarterly briefing process.

@@ -152,6 +152,14 @@ def _parse_args() -> argparse.Namespace:
         help="One-way commission fraction (default: 0.001 = 0.1%%)",
     )
     p.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=3.0,
+        metavar="BPS",
+        dest="slippage_bps",
+        help="One-way slippage in basis points applied to market fills (default: 3)",
+    )
+    p.add_argument(
         "--config-dir",
         default="config/strategies",
         metavar="DIR",
@@ -340,6 +348,7 @@ async def _run(args: argparse.Namespace) -> None:
         strategy=strategy,
         initial_equity=Decimal(str(args.equity)),
         commission_pct=args.commission,
+        slippage_bps=args.slippage_bps,
     )
 
     # 6. Walk-forward loop

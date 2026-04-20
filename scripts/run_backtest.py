@@ -102,6 +102,14 @@ def _parse_args() -> argparse.Namespace:
         help="Global risk config path (default: config/risk_global.yaml)",
     )
     p.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=3.0,
+        metavar="BPS",
+        dest="slippage_bps",
+        help="One-way slippage in basis points applied to market fills (default: 3)",
+    )
+    p.add_argument(
         "--output",
         metavar="CSV",
         help="Write trades to this CSV file (optional)",
@@ -211,11 +219,18 @@ async def _run(args: argparse.Namespace) -> None:
         strategy=strategy,
         initial_equity=Decimal(str(args.equity)),
         commission_pct=args.commission,
+        slippage_bps=args.slippage_bps,
     )
     result = engine.run(df, params_with_tf, instrument)
 
     # Print results
     print(str(result))
+    print(
+        f"\nGross Sharpe (no costs): {result.gross_sharpe:.2f}"
+        f"  |  Net Sharpe: {result.metrics.sharpe_ratio:.2f}"
+        f"  |  Cost drag: {result.gross_sharpe - result.metrics.sharpe_ratio:.2f}"
+        f"  (slippage={args.slippage_bps:.1f} bps, commission={args.commission*100:.2f}%)"
+    )
     print(f"\nTrades: {len(result.trades)}")
     if result.trades:
         wins = sum(1 for t in result.trades if t["pnl_net"] > 0)

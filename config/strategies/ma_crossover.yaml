@@ -19,7 +19,7 @@ params:
   atr_period: 14
   min_atr_pct: 0.5
   stop_loss_atr_mult: 2.0
-  trailing_stop_enabled: true
+  trailing_stop_atr_multiplier: 2.0  # replaces unused trailing_stop_enabled flag
 
 risk:
   max_risk_per_trade_pct: 1.0
@@ -32,3 +32,7 @@ risk:
 execution:
   order_type: market
   time_in_force: day
+
+favourable_regimes:
+  - trend_up
+  - trend_down

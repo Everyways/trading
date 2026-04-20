@@ -11,9 +11,51 @@
 
 {% if kill_switch %}
 <div class="alert alert-crit">
-  &#x1F6A8; <strong>Global kill switch engaged</strong>
-  {% if kill_switch_reason %} — {{ kill_switch_reason }}{% endif %}
+  <div class="alert-row">
+    <span>
+      &#x1F6A8; <strong>Global kill switch engaged</strong>
+      {% if kill_switch_reason %} — {{ kill_switch_reason }}{% endif %}
+    </span>
+    <button id="reset-kill-btn" class="btn btn-warn" type="button">
+      Reset kill switch
+    </button>
+  </div>
+  <div id="reset-kill-status" class="muted" style="margin-top:8px;"></div>
 </div>
+
+<script>
+(function () {
+  var btn = document.getElementById("reset-kill-btn");
+  var status = document.getElementById("reset-kill-status");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    if (!confirm(
+      "Reset the global kill switch?\n\n" +
+      "Trading will resume on the next tick (within ~15 minutes).\n" +
+      "Only do this if you have verified that losses are under control."
+    )) { return; }
+    btn.disabled = true;
+    btn.textContent = "Resetting…";
+    fetch("/api/resume", { method: "POST", credentials: "same-origin" })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (res.ok) {
+          status.textContent = "OK — " + (res.j.note || "kill switch reset requested");
+          setTimeout(function () { window.location.reload(); }, 3000);
+        } else {
+          status.textContent = "Error: " + (res.j.detail || "reset failed");
+          btn.disabled = false;
+          btn.textContent = "Reset kill switch";
+        }
+      })
+      .catch(function (err) {
+        status.textContent = "Error: " + err;
+        btn.disabled = false;
+        btn.textContent = "Reset kill switch";
+      });
+  });
+})();
+</script>
 {% endif %}
 
 <!-- ── Summary cards ─────────────────────────────── -->

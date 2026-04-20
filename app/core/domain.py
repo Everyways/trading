@@ -45,9 +45,9 @@ class Instrument(BaseModel):
 class Candle(BaseModel):
     """OHLCV bar. is_closed=True means the bar has fully formed."""
 
-    time: datetime          # bar open time (timezone-aware)
+    time: datetime  # bar open time (timezone-aware)
     symbol: str
-    timeframe: str          # e.g. "15m", "1h", "1d"
+    timeframe: str  # e.g. "15m", "1h", "1d"
     open: Decimal
     high: Decimal
     low: Decimal
@@ -115,6 +115,7 @@ class OrderAck(BaseModel):
     qty: Decimal
     filled_qty: Decimal = Decimal("0")
     avg_fill_price: Decimal | None = None
+    stop_price: Decimal | None = None
     submitted_at: datetime | None = None
     filled_at: datetime | None = None
     error_message: str | None = None
@@ -124,7 +125,7 @@ class Position(BaseModel):
     """Current broker position for a symbol."""
 
     symbol: str
-    qty: Decimal                    # positive = long, negative = short
+    qty: Decimal  # positive = long, negative = short
     avg_entry_price: Decimal
     current_price: Decimal | None = None
     unrealized_pnl: Decimal | None = None
@@ -148,7 +149,7 @@ class Account(BaseModel):
     cash: Decimal
     buying_power: Decimal
     currency: str = "USD"
-    day_trade_count: int = 0            # for PDT compliance
+    day_trade_count: int = 0  # for PDT compliance
     pattern_day_trader: bool = False
 
 
@@ -172,8 +173,8 @@ class Signal(BaseModel):
     instrument: Instrument
     side: SignalSide
     reason: str
-    context: dict[str, Any] = Field(default_factory=dict)   # indicator snapshot
-    time: datetime                  # time of the last closed candle
+    context: dict[str, Any] = Field(default_factory=dict)  # indicator snapshot
+    time: datetime  # time of the last closed candle
     executed: bool = False
     rejected_reason: str | None = None
 
@@ -193,7 +194,7 @@ class Trade(BaseModel):
     pnl_net: Decimal
     fees: Decimal = Decimal("0")
     duration_seconds: int
-    mode: str                       # "paper" | "live"
+    mode: str  # "paper" | "live"
 
     @property
     def is_winner(self) -> bool:

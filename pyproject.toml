@@ -31,6 +31,7 @@ dependencies = [
     "PyYAML>=6.0",
     "click>=8.1",
     "rich>=13.0",
+    "yfinance>=0.2.40",
 ]
 
 [project.optional-dependencies]
@@ -85,6 +86,8 @@ module = [
     "pandas.*",
     "pandas_ta",
     "pandas_ta.*",
+    "yfinance",
+    "yfinance.*",
     "alpaca.*",
     "apscheduler.*",
     "telegram.*",

@@ -26,9 +26,10 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.core.domain import OrderRequest, Position
-from app.core.enums import RiskEventType, RiskSeverity
+from app.core.enums import OrderSide, RiskEventType, RiskSeverity
 from app.data.models import KillSwitch as KillSwitchModel
 from app.data.models import RiskEvent
+from app.risk.earnings_calendar import EarningsCalendar
 
 log = logging.getLogger(__name__)
 
@@ -48,9 +49,9 @@ class _StrategyState:
 
     def __init__(self) -> None:
         self.daily_pnl: Decimal = Decimal("0")
-        self.day_trade_times: deque[datetime] = deque()   # rolling 5-day window
-        self.order_times: deque[datetime] = deque()        # rolling 60-second window
-        self.paused_today: bool = False                    # strategy daily stop hit
+        self.day_trade_times: deque[datetime] = deque()  # rolling 5-day window
+        self.order_times: deque[datetime] = deque()  # rolling 60-second window
+        self.paused_today: bool = False  # strategy daily stop hit
 
 
 class RiskManager:
@@ -78,6 +79,7 @@ class RiskManager:
         self._daily_global_pnl: Decimal = Decimal("0")
         self._today: date = datetime.now(tz=UTC).date()
         self._states: dict[str, _StrategyState] = {}
+        self._earnings = EarningsCalendar()
 
         self._load_from_db()
 
@@ -122,9 +124,7 @@ class RiskManager:
         if account_equity > 0:
             global_daily_pct = -self._daily_global_pnl / account_equity * 100
             if global_daily_pct >= max_daily_pct:
-                return False, (
-                    f"global daily loss {global_daily_pct:.2f}% ≥ {max_daily_pct}%"
-                )
+                return False, (f"global daily loss {global_daily_pct:.2f}% ≥ {max_daily_pct}%")
 
         # 5. Strategy daily loss → pause strategy
         max_strat_daily_pct = Decimal(str(strategy_risk.get("max_daily_loss_pct", 2.0)))
@@ -163,6 +163,18 @@ class RiskManager:
         if not self._under_rate_limit(state, max_rate):
             return False, f"{strategy_name}: order rate limit {max_rate}/min exceeded"
 
+        # 9. Earnings blackout — block BUY orders within 2 trading days of earnings.
+        #    SELL signals always pass so existing positions can be closed normally.
+        if order.side == OrderSide.BUY and self._earnings.is_blackout(order.symbol):
+            reason = f"{order.symbol}: earnings blackout active"
+            self._log_risk_event(
+                event_type=RiskEventType.DAILY_LOSS_LIMIT,
+                severity=RiskSeverity.INFO,
+                scope="strategy",
+                message=reason,
+            )
+            return False, reason
+
         return True, ""
 
     def record_order_submitted(self, strategy_name: str) -> None:
@@ -185,7 +197,7 @@ class RiskManager:
         state.daily_pnl += realised_pnl
         self._daily_global_pnl += realised_pnl
         if realised_pnl < 0:
-            self._monthly_loss_eur += (-realised_pnl * self._eur_per_usd)
+            self._monthly_loss_eur += -realised_pnl * self._eur_per_usd
 
     def record_day_trade(self, strategy_name: str) -> None:
         """Record a day trade (open + close same session) for PDT tracking."""
@@ -374,11 +386,9 @@ class RiskManager:
             month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             stmt_trades = select(Trade).where(Trade.entry_time >= month_start)
             trades = self._session.exec(stmt_trades).all()
-            monthly_pnl_usd = sum(
-                (t.pnl_net or Decimal("0")) for t in trades
-            )
+            monthly_pnl_usd = sum((t.pnl_net or Decimal("0")) for t in trades)
             if monthly_pnl_usd < 0:
-                self._monthly_loss_eur = (-monthly_pnl_usd * self._eur_per_usd)
+                self._monthly_loss_eur = -monthly_pnl_usd * self._eur_per_usd
             log.info(
                 "RiskManager: monthly_loss_eur=%.2f, global_kill=%s",
                 self._monthly_loss_eur,

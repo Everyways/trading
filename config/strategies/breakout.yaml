@@ -50,3 +50,8 @@ risk:
 execution:
   order_type: market
   time_in_force: gtc
+
+favourable_regimes:
+  - trend_up
+  - trend_down
+  - chop

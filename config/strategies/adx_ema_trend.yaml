@@ -25,6 +25,7 @@ params:
   adx_threshold: 20.0   # Minimum ADX to allow signal (< 20 = range, > 25 = strong trend)
   stop_loss_pct: 2.0    # Stop-loss in % below entry
   take_profit_pct: 5.0  # Take-profit in % above entry (bracket order)
+  trailing_stop_atr_multiplier: 2.0  # ATR-based trailing stop (ratchets up only)
 
 risk:
   max_risk_per_trade_pct: 1.0
@@ -37,3 +38,7 @@ risk:
 execution:
   order_type: market
   time_in_force: day
+
+favourable_regimes:
+  - trend_up
+  - trend_down
