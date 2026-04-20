@@ -64,6 +64,12 @@ class GlobalSettings(BaseSettings):
         description="Path to the emergency-stop sentinel file. If it exists at tick time, "
         "the global kill switch is engaged immediately.",
     )
+    resume_switch_file: str = Field(
+        default="RESUME",
+        alias="TRADING_BOT_RESUME_FILE",
+        description="Path to the resume sentinel file. If it exists at tick time, "
+        "the in-memory kill switch is reset (used by dashboard reset button).",
+    )
 
     # --- Paths ---
     data_dir: str = Field(default="./data")

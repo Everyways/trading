@@ -99,6 +99,7 @@ class TradingRunner:
         notifier: TelegramNotifier | None = None,
         command_bot: TelegramCommandBot | None = None,
         kill_file: Path = Path("KILL"),
+        resume_file: Path = Path("RESUME"),
     ) -> None:
         self._provider = provider
         self._cfgs = strategy_configs
@@ -108,6 +109,7 @@ class TradingRunner:
         self._notifier = notifier
         self._command_bot = command_bot
         self._kill_file = kill_file
+        self._resume_file = resume_file
 
         # In-memory entry-time registry: symbol → UTC datetime of last BUY fill.
         # Used to detect same-session round-trips (day trades) for PDT tracking.
@@ -212,6 +214,22 @@ class TradingRunner:
 
     async def _tick(self) -> None:
         """One evaluation cycle: called at each 15-minute bar close."""
+        # RESUME sentinel: reset the in-memory kill switch if requested by dashboard.
+        # Checked BEFORE the KILL file so a stale KILL doesn't immediately re-engage.
+        if self._resume_file.exists():
+            self._risk.reset_kill_switch(reset_by="dashboard")
+            self._positions_liquidated = False
+            try:
+                self._resume_file.unlink()
+            except OSError:
+                log.exception("Failed to remove RESUME sentinel %s", self._resume_file)
+            # Also remove any lingering KILL file so the next check doesn't re-engage
+            if self._kill_file.exists():
+                try:
+                    self._kill_file.unlink()
+                except OSError:
+                    log.exception("Failed to remove stale KILL file %s", self._kill_file)
+
         # File-based kill switch: check the sentinel file every tick.
         # Most reliable emergency stop — works even if the in-memory flag was reset.
         if self._kill_file.exists():

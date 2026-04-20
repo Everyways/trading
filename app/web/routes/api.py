@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlmodel import select
 
 from app.web.auth import require_auth
@@ -106,22 +106,45 @@ def emergency_stop(reason: str = "API /stop", _: str = Depends(require_auth)) ->
 
 @router.post("/resume")
 def emergency_resume(_: str = Depends(require_auth)) -> dict[str, str]:
-    """Reset the emergency stop: deletes the KILL sentinel file.
+    """Reset the emergency stop, from file-level down to the in-memory flag.
 
-    The in-memory kill switch is NOT reset here — only the file is removed.
-    Use the Telegram /resume command or restart the process to clear the
-    in-memory flag after verifying it is safe to resume trading.
+    Steps:
+      1. Remove the KILL sentinel file (if present)
+      2. Create the RESUME sentinel file — the runner picks it up on next tick
+         and calls ``risk_manager.reset_kill_switch()``.
+      3. Flip ``KillSwitch.engaged = False`` in the DB so the dashboard reflects
+         the change immediately (the runner will persist again on reset).
     """
     from app.config import get_settings
-    kill_file = Path(get_settings().kill_switch_file)
-    if not kill_file.exists():
-        raise HTTPException(
-            status_code=409,
-            detail="KILL file does not exist — bot is not stopped via file",
-        )
-    kill_file.unlink()
+    from app.data.database import get_session
+    from app.data.models import KillSwitch
+
+    settings = get_settings()
+    kill_file = Path(settings.kill_switch_file)
+    resume_file = Path(settings.resume_switch_file)
+
+    if kill_file.exists():
+        kill_file.unlink()
+    resume_file.touch()
+
+    db_updated = False
+    try:
+        with get_session() as session:
+            ks = session.exec(
+                select(KillSwitch).where(KillSwitch.engaged == True)  # noqa: E712
+            ).first()
+            if ks:
+                ks.engaged = False
+                ks.reason = f"{ks.reason or ''} | reset via dashboard".strip(" |")
+                session.add(ks)
+                session.commit()
+                db_updated = True
+    except Exception:
+        pass
+
     return {
-        "status": "file_removed",
-        "kill_file": str(kill_file),
-        "note": "Send /resume via Telegram to also reset the in-memory kill switch",
+        "status": "ok",
+        "resume_file": str(resume_file),
+        "db_updated": str(db_updated).lower(),
+        "note": "Kill switch will clear on the next tick (within ~15 minutes).",
     }
