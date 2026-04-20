@@ -18,11 +18,7 @@ NOW = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
 
 
 def _make_config(paper: bool = True) -> AlpacaConfig:
-    base_url = (
-        "https://paper-api.alpaca.markets"
-        if paper
-        else "https://api.alpaca.markets"
-    )
+    base_url = "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
     return AlpacaConfig(
         alpaca_api_key="PKTEST123",
         alpaca_api_secret="SECRET456",
@@ -63,6 +59,7 @@ def _mock_submitted_order(client_order_id: str):
     from alpaca.trading.enums import OrderSide as AlpacaOrderSide
     from alpaca.trading.enums import OrderStatus as AlpacaOrderStatus
     from alpaca.trading.enums import OrderType as AlpacaOrderType
+
     order.status = AlpacaOrderStatus.NEW
     order.side = AlpacaOrderSide.BUY
     order.type = AlpacaOrderType.MARKET
@@ -76,6 +73,7 @@ def _mock_submitted_order(client_order_id: str):
     order.time_in_force = MagicMock()
 
     from alpaca.trading.enums import TimeInForce as AlpacaTIF
+
     order.time_in_force = AlpacaTIF.DAY
     return order
 
@@ -268,5 +266,6 @@ def test_is_paper_false_for_live_url():
 def test_alpaca_registered_in_broker_registry():
     import app.providers  # noqa: F401 — triggers registration
     from app.core.registry import broker_registry
+
     assert "alpaca" in broker_registry
     assert broker_registry.get("alpaca") is AlpacaProvider

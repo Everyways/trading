@@ -29,7 +29,7 @@ class StrategyConfig:
     name: str
     version: str
     enabled: bool
-    mode: str                              # "paper" | "live"
+    mode: str  # "paper" | "live"
     provider: str
     timeframe: str
     lookback: int
@@ -70,7 +70,7 @@ def _resolve_universe(raw: dict[str, Any]) -> list[UniverseEntry]:
             break
 
     if chosen is None and profiles:
-        chosen = profiles[0]   # last resort: first profile
+        chosen = profiles[0]  # last resort: first profile
 
     if chosen is None:
         log.warning("No universe profiles found — returning empty universe")
@@ -123,7 +123,9 @@ def load_strategy_configs(
         if mode_filter and cfg_mode != mode_filter:
             log.debug(
                 "Strategy %s mode=%s ≠ filter=%s — skipping",
-                yaml_file.stem, cfg_mode, mode_filter,
+                yaml_file.stem,
+                cfg_mode,
+                mode_filter,
             )
             continue
 
@@ -151,9 +153,7 @@ def load_strategy_configs(
                 params=raw.get("params", {}),
                 risk=raw.get("risk", {}),
                 execution=raw.get("execution", {}),
-                favourable_regimes=[
-                    str(r).lower() for r in raw.get("favourable_regimes", [])
-                ],
+                favourable_regimes=[str(r).lower() for r in raw.get("favourable_regimes", [])],
             )
         )
         log.info(

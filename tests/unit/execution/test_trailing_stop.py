@@ -10,12 +10,8 @@ Verifies:
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pandas as pd
-import pytest
 
 from app.core.domain import (
     OrderAck,
@@ -25,10 +21,10 @@ from app.core.domain import (
 from app.core.enums import OrderSide, OrderStatus, OrderType
 from app.execution.strategy_loader import StrategyConfig, UniverseEntry
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_cfg(
     atr_mult: float | None = None,
@@ -101,9 +97,6 @@ def _build_runner(
     atr_value: float = 1.5,
 ) -> tuple[object, AsyncMock, AsyncMock]:
     """Return (runner, cancel_mock, submit_mock)."""
-    from app.core.enums import SignalSide
-    from app.core.domain import Signal, Instrument
-    from app.core.enums import AssetClass
     from app.execution.runner import TradingRunner
     from app.strategies.base import Strategy, StrategyContext
 
@@ -152,6 +145,7 @@ def _build_runner(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestTrailingStopRatchet:
     def test_ratchet_up_when_proposed_higher(self) -> None:
@@ -233,9 +227,7 @@ class TestTrailingStopRatchet:
             _make_stop_order(stop_price=95.0, broker_id="ord-1"),
             _make_stop_order(stop_price=96.0, broker_id="ord-2"),
         ]
-        runner, cancel_mock, submit_mock = _build_runner(
-            cfg, [pos], stop_orders, atr_value=1.0
-        )
+        runner, cancel_mock, submit_mock = _build_runner(cfg, [pos], stop_orders, atr_value=1.0)
         # proposed = 120 - 1.0*2 = 118 > max(95, 96) → ratchet
 
         asyncio.get_event_loop().run_until_complete(runner._check_bracket_health())

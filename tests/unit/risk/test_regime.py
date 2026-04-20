@@ -52,7 +52,7 @@ class TestHighVolRegime:
 
         # Last 50 bars: massive swings → push last ATR into top tercile
         volatile_closes = np.cumsum(rng.normal(0, 0.5, 50)) + float(quiet_closes[-1])
-        volatile_highs = volatile_closes + 20.0   # very wide range
+        volatile_highs = volatile_closes + 20.0  # very wide range
         volatile_lows = volatile_closes - 20.0
 
         closes = np.concatenate([quiet_closes, volatile_closes])
@@ -125,22 +125,22 @@ class TestTrendDownRegime:
         has fallen to ~334, so close < EMA → TREND_DOWN.
         """
         # Phase 1: 200 flat bars — large range → ATR% ≈ 2%
-        p1_rows = [
-            {"open": 400, "high": 404, "low": 396, "close": 400, "volume": 1e6}
-        ] * 200
+        p1_rows = [{"open": 400, "high": 404, "low": 396, "close": 400, "volume": 1e6}] * 200
 
         # Phase 2: 60 declining bars — small proportional range → ATR% ≈ 0.2%
         p2_rows = []
         price = 400.0
         for _ in range(60):
-            price *= 0.997           # −0.3% per bar
-            p2_rows.append({
-                "open": price,
-                "high": price * 1.001,
-                "low":  price * 0.999,
-                "close": price,
-                "volume": 1e6,
-            })
+            price *= 0.997  # −0.3% per bar
+            p2_rows.append(
+                {
+                    "open": price,
+                    "high": price * 1.001,
+                    "low": price * 0.999,
+                    "close": price,
+                    "volume": 1e6,
+                }
+            )
 
         df = pd.DataFrame(p1_rows + p2_rows)
         detector = RegimeDetector(ema_period=200, atr_period=14)

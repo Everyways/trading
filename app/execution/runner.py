@@ -161,9 +161,7 @@ class TradingRunner:
 
         scheduler = AsyncIOScheduler(timezone="America/New_York")
         scheduler.add_job(self._tick, "cron", minute="0,15,30,45", id="main_tick")
-        scheduler.add_job(
-            self._risk.reset_daily_state, "cron", hour=9, minute=25, id="daily_reset"
-        )
+        scheduler.add_job(self._risk.reset_daily_state, "cron", hour=9, minute=25, id="daily_reset")
         # Reset monthly loss counter on the 1st of each month at 00:01 UTC.
         # Without this the in-memory accumulator crosses month boundaries and
         # permanently blocks trading after the first month with losses.
@@ -186,13 +184,11 @@ class TradingRunner:
 
         command_bot_task: asyncio.Task | None = None
         if self._command_bot:
-            command_bot_task = asyncio.create_task(
-                self._command_bot.run(), name="telegram-cmd-bot"
-            )
+            command_bot_task = asyncio.create_task(self._command_bot.run(), name="telegram-cmd-bot")
             log.info("Telegram command bot task started")
 
         try:
-            await asyncio.Event().wait()   # run forever
+            await asyncio.Event().wait()  # run forever
         except (KeyboardInterrupt, SystemExit):
             log.info("Shutdown requested")
         finally:
@@ -265,14 +261,14 @@ class TradingRunner:
             if cfg.favourable_regimes and regime.value not in cfg.favourable_regimes:
                 log.info(
                     "Regime gate: skipping %s (regime=%s, allowed=%s)",
-                    cfg.name, regime.value, cfg.favourable_regimes,
+                    cfg.name,
+                    regime.value,
+                    cfg.favourable_regimes,
                 )
                 continue
             for entry in cfg.universe:
                 tasks.append(
-                    self._evaluate(
-                        cfg, self._strategies[cfg.name], entry.symbol, entry.asset_class
-                    )
+                    self._evaluate(cfg, self._strategies[cfg.name], entry.symbol, entry.asset_class)
                 )
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -310,9 +306,7 @@ class TradingRunner:
                     continue
 
                 instr_row = self._session.exec(
-                    sqlselect(InstrumentModel).where(
-                        InstrumentModel.symbol == pos.symbol
-                    )
+                    sqlselect(InstrumentModel).where(InstrumentModel.symbol == pos.symbol)
                 ).first()
                 strat_row = self._session.exec(
                     sqlselect(StrategyModel).where(StrategyModel.name == cfg.name)
@@ -375,10 +369,7 @@ class TradingRunner:
 
             for pos in open_pos:
                 cfg = next(
-                    (
-                        c for c in self._cfgs
-                        if any(e.symbol == pos.symbol for e in c.universe)
-                    ),
+                    (c for c in self._cfgs if any(e.symbol == pos.symbol for e in c.universe)),
                     None,
                 )
                 if cfg is None:
@@ -386,28 +377,27 @@ class TradingRunner:
 
                 open_orders = await self._provider.list_open_orders(symbol=pos.symbol)
                 stop_orders = [
-                    o for o in open_orders
-                    if o.side == OrderSide.SELL
-                    and o.type in (OrderType.STOP, OrderType.STOP_LIMIT)
+                    o
+                    for o in open_orders
+                    if o.side == OrderSide.SELL and o.type in (OrderType.STOP, OrderType.STOP_LIMIT)
                 ]
                 has_stop = bool(stop_orders)
 
                 if not has_stop:
                     avg_entry = pos.avg_entry_price
                     if avg_entry <= 0:
-                        log.warning(
-                            "Bracket watchdog: %s has no valid avg entry price", pos.symbol
-                        )
+                        log.warning("Bracket watchdog: %s has no valid avg entry price", pos.symbol)
                         continue
 
                     stop_loss_pct = float(cfg.params.get("stop_loss_pct", 2.0))
-                    sl_price = (
-                        avg_entry * (1 - Decimal(str(stop_loss_pct)) / 100)
-                    ).quantize(Decimal("0.01"))
+                    sl_price = (avg_entry * (1 - Decimal(str(stop_loss_pct)) / 100)).quantize(
+                        Decimal("0.01")
+                    )
 
                     log.warning(
                         "Bracket watchdog: no stop order for %s — placing emergency stop @ %s",
-                        pos.symbol, sl_price,
+                        pos.symbol,
+                        sl_price,
                     )
                     emergency_order = OrderRequest(
                         symbol=pos.symbol,
@@ -421,13 +411,14 @@ class TradingRunner:
                         ack = await self._provider.submit_order(emergency_order)
                         log.warning(
                             "Emergency stop placed: %s qty=%s stop=%s → %s [%s]",
-                            pos.symbol, abs(pos.qty), sl_price,
-                            ack.status.value, ack.broker_order_id,
+                            pos.symbol,
+                            abs(pos.qty),
+                            sl_price,
+                            ack.status.value,
+                            ack.broker_order_id,
                         )
                     except Exception:
-                        log.exception(
-                            "Bracket watchdog: failed to place stop for %s", pos.symbol
-                        )
+                        log.exception("Bracket watchdog: failed to place stop for %s", pos.symbol)
                     continue
 
                 # Trailing stop ratchet — only when configured and position has current price
@@ -440,9 +431,7 @@ class TradingRunner:
                     continue
 
                 current_price = float(pos.current_price)
-                proposed_stop = Decimal(
-                    str(round(current_price - float(atr) * atr_mult, 2))
-                )
+                proposed_stop = Decimal(str(round(current_price - float(atr) * atr_mult, 2)))
 
                 # Find the highest existing stop price among all stop-sell orders
                 existing_stop = max(
@@ -454,7 +443,11 @@ class TradingRunner:
 
                 log.info(
                     "Trailing stop raised: %s %s → %s (ATR=%.4f × %.1f)",
-                    pos.symbol, existing_stop, proposed_stop, float(atr), atr_mult,
+                    pos.symbol,
+                    existing_stop,
+                    proposed_stop,
+                    float(atr),
+                    atr_mult,
                 )
                 for stop_order in stop_orders:
                     try:
@@ -462,7 +455,8 @@ class TradingRunner:
                     except Exception:
                         log.exception(
                             "Trailing stop: failed to cancel old stop %s for %s",
-                            stop_order.broker_order_id, pos.symbol,
+                            stop_order.broker_order_id,
+                            pos.symbol,
                         )
                         break
                 else:
@@ -478,13 +472,14 @@ class TradingRunner:
                         ack = await self._provider.submit_order(new_stop)
                         log.info(
                             "Trailing stop placed: %s qty=%s stop=%s → %s [%s]",
-                            pos.symbol, abs(pos.qty), proposed_stop,
-                            ack.status.value, ack.broker_order_id,
+                            pos.symbol,
+                            abs(pos.qty),
+                            proposed_stop,
+                            ack.status.value,
+                            ack.broker_order_id,
                         )
                     except Exception:
-                        log.exception(
-                            "Trailing stop: failed to place new stop for %s", pos.symbol
-                        )
+                        log.exception("Trailing stop: failed to place new stop for %s", pos.symbol)
         except Exception:
             log.exception("Bracket health check failed")
 
@@ -535,7 +530,10 @@ class TradingRunner:
                     ack = await self._provider.submit_order(order)
                     log.warning(
                         "Kill switch SELL: %s qty=%s → %s [%s]",
-                        pos.symbol, abs(pos.qty), ack.status.value, ack.broker_order_id,
+                        pos.symbol,
+                        abs(pos.qty),
+                        ack.status.value,
+                        ack.broker_order_id,
                     )
                     if self._notifier:
                         await self._notifier.notify_kill_switch(
@@ -593,7 +591,10 @@ class TradingRunner:
             if len(df) < cfg.lookback:
                 log.info(
                     "%s/%s: only %d candles (need %d) — skipping",
-                    cfg.name, symbol, len(df), cfg.lookback,
+                    cfg.name,
+                    symbol,
+                    len(df),
+                    cfg.lookback,
                 )
                 return
 
@@ -637,7 +638,7 @@ class TradingRunner:
                 symbol=symbol,
                 side=OrderSide.BUY if signal.side == SignalSide.BUY else OrderSide.SELL,
                 type=OrderType.MARKET,
-                qty=Decimal("1"),   # placeholder qty for gate check
+                qty=Decimal("1"),  # placeholder qty for gate check
                 strategy_name=cfg.name,
             )
             allowed, rejection_reason = self._risk.check_order(
@@ -694,14 +695,12 @@ class TradingRunner:
         )
 
         # Bracket prices (both required for Alpaca bracket order class)
-        sl_price = (entry_price * (1 - Decimal(str(stop_loss_pct)) / 100)).quantize(
-            Decimal("0.01")
-        )
+        sl_price = (entry_price * (1 - Decimal(str(stop_loss_pct)) / 100)).quantize(Decimal("0.01"))
         tp_price: Decimal | None = None
         if take_profit_pct > 0:
-            tp_price = (
-                entry_price * (1 + Decimal(str(take_profit_pct)) / 100)
-            ).quantize(Decimal("0.01"))
+            tp_price = (entry_price * (1 + Decimal(str(take_profit_pct)) / 100)).quantize(
+                Decimal("0.01")
+            )
 
         order = OrderRequest(
             symbol=signal.instrument.symbol,
@@ -710,7 +709,7 @@ class TradingRunner:
             qty=qty,
             strategy_name=cfg.name,
             stop_loss_price=sl_price,
-            take_profit_price=tp_price,   # None → plain market order
+            take_profit_price=tp_price,  # None → plain market order
         )
 
         try:
@@ -721,8 +720,12 @@ class TradingRunner:
             )
             log.info(
                 "BUY submitted: %s qty=%s @ ~%s%s → %s [%s]",
-                signal.instrument.symbol, qty, entry_price, bracket_info,
-                ack.status.value, ack.broker_order_id,
+                signal.instrument.symbol,
+                qty,
+                entry_price,
+                bracket_info,
+                ack.status.value,
+                ack.broker_order_id,
             )
             self._position_entry_times[signal.instrument.symbol] = datetime.now(tz=UTC)
             if self._notifier:
@@ -834,7 +837,10 @@ class TradingRunner:
 
             log.info(
                 "SELL submitted: %s qty=%s → %s [%s]",
-                symbol, qty, ack.status.value, ack.broker_order_id,
+                symbol,
+                qty,
+                ack.status.value,
+                ack.broker_order_id,
             )
             if self._notifier:
                 await self._notifier.notify_order("SELL", symbol, qty, "market", cfg.name)

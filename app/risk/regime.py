@@ -66,7 +66,8 @@ class RegimeDetector:
         if len(df) < self._atr_period + 1:
             log.warning(
                 "RegimeDetector: only %d bars (need %d) — defaulting to CHOP",
-                len(df), self._atr_period + 1,
+                len(df),
+                self._atr_period + 1,
             )
             return MarketRegime.CHOP
 

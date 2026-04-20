@@ -131,8 +131,8 @@ _ALPACA_TIF_TO_DOMAIN: dict[AlpacaTIF, TimeInForce] = {
     AlpacaTIF.GTC: TimeInForce.GTC,
     AlpacaTIF.IOC: TimeInForce.IOC,
     AlpacaTIF.FOK: TimeInForce.FOK,
-    AlpacaTIF.OPG: TimeInForce.DAY,   # fallback — logged below
-    AlpacaTIF.CLS: TimeInForce.DAY,   # fallback — logged below
+    AlpacaTIF.OPG: TimeInForce.DAY,  # fallback — logged below
+    AlpacaTIF.CLS: TimeInForce.DAY,  # fallback — logged below
 }
 
 _DOMAIN_TIF_TO_ALPACA: dict[TimeInForce, AlpacaTIF] = {
@@ -166,9 +166,7 @@ def timeframe_str_to_alpaca(tf: str) -> TimeFrame:
     try:
         return TIMEFRAME_MAP[tf]
     except KeyError:
-        raise ValueError(
-            f"Unknown timeframe '{tf}'. Supported: {list(TIMEFRAME_MAP)}"
-        ) from None
+        raise ValueError(f"Unknown timeframe '{tf}'. Supported: {list(TIMEFRAME_MAP)}") from None
 
 
 def alpaca_order_status_to_domain(status: AlpacaOrderStatus) -> OrderStatus:
@@ -194,11 +192,7 @@ def account_to_domain(acc: AlpacaTradeAccount) -> Account:
 
 def position_to_domain(pos: AlpacaPosition) -> Position:
     """Convert an Alpaca Position to a domain Position."""
-    side = (
-        PositionSide.LONG
-        if pos.side == AlpacaPositionSide.LONG
-        else PositionSide.SHORT
-    )
+    side = PositionSide.LONG if pos.side == AlpacaPositionSide.LONG else PositionSide.SHORT
     qty = Decimal(pos.qty)
     if side == PositionSide.SHORT:
         qty = -abs(qty)
@@ -226,9 +220,7 @@ def order_to_ack(order: AlpacaOrder) -> OrderAck:
     qty = Decimal(str(order.qty or "0"))
     filled_qty = Decimal(str(order.filled_qty or "0"))
     avg_fill_price = (
-        Decimal(str(order.filled_avg_price))
-        if order.filled_avg_price is not None
-        else None
+        Decimal(str(order.filled_avg_price)) if order.filled_avg_price is not None else None
     )
 
     # Map order type — trailing_stop falls back to stop
@@ -242,15 +234,9 @@ def order_to_ack(order: AlpacaOrder) -> OrderAck:
     }
     order_type = type_map.get(alpaca_type or AlpacaOrderType.MARKET, OrderType.MARKET)
 
-    side = _ALPACA_SIDE_TO_DOMAIN.get(
-        order.side or AlpacaOrderSide.BUY, OrderSide.BUY
-    )
+    side = _ALPACA_SIDE_TO_DOMAIN.get(order.side or AlpacaOrderSide.BUY, OrderSide.BUY)
 
-    stop_price = (
-        Decimal(str(order.stop_price))
-        if order.stop_price is not None
-        else None
-    )
+    stop_price = Decimal(str(order.stop_price)) if order.stop_price is not None else None
 
     return OrderAck(
         client_order_id=order.client_order_id,
@@ -294,15 +280,9 @@ def bar_to_candle(
 
 def asset_to_instrument(asset: AlpacaAsset) -> Instrument:
     """Convert an Alpaca Asset to a domain Instrument."""
-    asset_class = _ALPACA_ASSET_CLASS_TO_DOMAIN.get(
-        asset.asset_class, AssetClass.EQUITY
-    )
-    tick_size = (
-        Decimal(str(asset.price_increment)) if asset.price_increment else None
-    )
-    min_qty = (
-        Decimal(str(asset.min_order_size)) if asset.min_order_size else None
-    )
+    asset_class = _ALPACA_ASSET_CLASS_TO_DOMAIN.get(asset.asset_class, AssetClass.EQUITY)
+    tick_size = Decimal(str(asset.price_increment)) if asset.price_increment else None
+    min_qty = Decimal(str(asset.min_order_size)) if asset.min_order_size else None
     return Instrument(
         symbol=asset.symbol,
         asset_class=asset_class,
@@ -363,9 +343,7 @@ def trade_update_to_fill(tu: TradeUpdate) -> Fill | None:
         return None
 
     order = tu.order
-    side = _ALPACA_SIDE_TO_DOMAIN.get(
-        order.side or AlpacaOrderSide.BUY, OrderSide.BUY
-    )
+    side = _ALPACA_SIDE_TO_DOMAIN.get(order.side or AlpacaOrderSide.BUY, OrderSide.BUY)
 
     return Fill(
         client_order_id=order.client_order_id,

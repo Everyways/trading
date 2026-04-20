@@ -106,7 +106,9 @@ class EarningsCalendar:
                 if trading_days_away <= self._blackout_days:
                     log.info(
                         "Earnings blackout: %s earnings on %s (%d trading days away — blocked)",
-                        symbol, ed, trading_days_away,
+                        symbol,
+                        ed,
+                        trading_days_away,
                     )
                     return True
         return False
@@ -157,8 +159,7 @@ class EarningsCalendar:
                     return [raw.date()]
                 if isinstance(raw, list):
                     return [
-                        r.date() if hasattr(r, "date") else date.fromisoformat(str(r))
-                        for r in raw
+                        r.date() if hasattr(r, "date") else date.fromisoformat(str(r)) for r in raw
                     ]
                 return []
 
@@ -177,13 +178,12 @@ class EarningsCalendar:
             return []
 
         except ImportError:
-            log.warning(
-                "yfinance not installed — earnings blackout disabled for %s", symbol
-            )
+            log.warning("yfinance not installed — earnings blackout disabled for %s", symbol)
             return []
         except Exception:
             log.warning(
-                "yfinance fetch failed for %s — skipping earnings blackout", symbol,
+                "yfinance fetch failed for %s — skipping earnings blackout",
+                symbol,
                 exc_info=True,
             )
             return []

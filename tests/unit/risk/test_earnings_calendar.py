@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,10 +12,13 @@ import yaml
 
 from app.risk.earnings_calendar import EarningsCalendar, _trading_days_until
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helper tests
 # ---------------------------------------------------------------------------
+
 
 class TestTradingDaysUntil:
     def test_same_day_is_zero(self) -> None:
@@ -39,6 +41,7 @@ class TestTradingDaysUntil:
 # ---------------------------------------------------------------------------
 # EarningsCalendar tests (mocked yfinance)
 # ---------------------------------------------------------------------------
+
 
 def _make_calendar(
     tmp_path: Path,
