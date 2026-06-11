@@ -16,8 +16,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.domain import Fill, Instrument, OrderRequest, Signal
 from app.core.enums import AssetClass, OrderSide, OrderType, SignalSide, StrategyMode
+from app.core.indicators import ewm_atr
 from app.core.registry import strategy_registry
 from app.risk.position_sizer import size_position
 from app.risk.regime import MarketRegime, RegimeDetector
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from app.execution.strategy_loader import StrategyConfig
+    from app.core.domain import OrderAck
     from app.notifications.telegram import TelegramNotifier
     from app.notifications.telegram_commands import TelegramCommandBot
     from app.providers.base import BrokerProvider
@@ -128,6 +131,7 @@ class TradingRunner:
         self._resume_file = resume_file
 
         self._regime_detector = RegimeDetector()
+        self._regime_cache: tuple[date, MarketRegime] | None = None
 
         # In-memory entry-time registry: symbol → UTC datetime of last BUY fill.
         # Used to detect same-session round-trips (day trades) for PDT tracking.
@@ -877,6 +881,14 @@ class TradingRunner:
             if not open_pos:
                 return
 
+            open_orders = await self._provider.list_open_orders()
+            stop_orders_by_symbol: dict[str, list[OrderAck]] = defaultdict(list)
+            for o in open_orders:
+                if o.side == OrderSide.SELL and o.type in (OrderType.STOP, OrderType.STOP_LIMIT):
+                    stop_orders_by_symbol[o.symbol].append(o)
+
+            atr_cache: dict[tuple[str, str], Decimal | None] = {}
+
             for pos in open_pos:
                 cfg = next(
                     (c for c in self._cfgs if any(e.symbol == pos.symbol for e in c.universe)),
@@ -885,15 +897,9 @@ class TradingRunner:
                 if cfg is None:
                     continue
 
-                open_orders = await self._provider.list_open_orders(symbol=pos.symbol)
-                stop_orders = [
-                    o
-                    for o in open_orders
-                    if o.side == OrderSide.SELL and o.type in (OrderType.STOP, OrderType.STOP_LIMIT)
-                ]
-                has_stop = bool(stop_orders)
+                stop_orders = stop_orders_by_symbol.get(pos.symbol, [])
 
-                if not has_stop:
+                if not stop_orders:
                     avg_entry = pos.avg_entry_price
                     if avg_entry <= 0:
                         log.warning("Bracket watchdog: %s has no valid avg entry price", pos.symbol)
@@ -936,7 +942,10 @@ class TradingRunner:
                 if atr_mult <= 0 or pos.current_price is None:
                     continue
 
-                atr = await self._compute_atr(pos.symbol, cfg.timeframe)
+                atr_key = (pos.symbol, cfg.timeframe)
+                if atr_key not in atr_cache:
+                    atr_cache[atr_key] = await self._compute_atr(pos.symbol, cfg.timeframe)
+                atr = atr_cache[atr_key]
                 if atr is None or atr <= 0:
                     continue
 
@@ -959,6 +968,7 @@ class TradingRunner:
                     float(atr),
                     atr_mult,
                 )
+                all_cancelled = True
                 for stop_order in stop_orders:
                     try:
                         await self._provider.cancel_order(stop_order.broker_order_id)
@@ -968,28 +978,32 @@ class TradingRunner:
                             stop_order.broker_order_id,
                             pos.symbol,
                         )
+                        all_cancelled = False
                         break
-                else:
-                    new_stop = OrderRequest(
-                        symbol=pos.symbol,
-                        side=OrderSide.SELL,
-                        type=OrderType.STOP,
-                        qty=abs(pos.qty),
-                        strategy_name="trailing_stop",
-                        stop_price=proposed_stop,
+
+                if not all_cancelled:
+                    continue
+
+                new_stop = OrderRequest(
+                    symbol=pos.symbol,
+                    side=OrderSide.SELL,
+                    type=OrderType.STOP,
+                    qty=abs(pos.qty),
+                    strategy_name="trailing_stop",
+                    stop_price=proposed_stop,
+                )
+                try:
+                    ack = await self._provider.submit_order(new_stop)
+                    log.info(
+                        "Trailing stop placed: %s qty=%s stop=%s → %s [%s]",
+                        pos.symbol,
+                        abs(pos.qty),
+                        proposed_stop,
+                        ack.status.value,
+                        ack.broker_order_id,
                     )
-                    try:
-                        ack = await self._provider.submit_order(new_stop)
-                        log.info(
-                            "Trailing stop placed: %s qty=%s stop=%s → %s [%s]",
-                            pos.symbol,
-                            abs(pos.qty),
-                            proposed_stop,
-                            ack.status.value,
-                            ack.broker_order_id,
-                        )
-                    except Exception:
-                        log.exception("Trailing stop: failed to place new stop for %s", pos.symbol)
+                except Exception:
+                    log.exception("Trailing stop: failed to place new stop for %s", pos.symbol)
         except Exception:
             log.exception("Bracket health check failed")
 
@@ -1004,16 +1018,7 @@ class TradingRunner:
             df = _candles_to_df(candles)
             if len(df) < period + 1:
                 return None
-            prev_close = df["close"].shift(1)
-            tr = pd.concat(
-                [
-                    df["high"] - df["low"],
-                    (df["high"] - prev_close).abs(),
-                    (df["low"] - prev_close).abs(),
-                ],
-                axis=1,
-            ).max(axis=1)
-            atr = tr.ewm(span=period, adjust=False).mean().iloc[-1]
+            atr = ewm_atr(df, period).iloc[-1]
             return Decimal(str(round(float(atr), 4)))
         except Exception:
             log.exception("ATR computation failed for %s/%s", symbol, timeframe)
@@ -1064,7 +1069,15 @@ class TradingRunner:
             return False
 
     async def _detect_regime(self) -> MarketRegime:
-        """Fetch SPY daily bars and classify the current market regime."""
+        """Classify the current market regime from SPY daily bars.
+
+        Daily bars only change once per session, so the result is cached
+        per calendar day to avoid an extra broker round-trip on every tick.
+        """
+        today = datetime.now(tz=UTC).date()
+        if self._regime_cache is not None and self._regime_cache[0] == today:
+            return self._regime_cache[1]
+
         try:
             end = datetime.now(tz=UTC)
             start = end - timedelta(days=260)
@@ -1072,11 +1085,15 @@ class TradingRunner:
             df = _candles_to_df(candles)
             if df.empty:
                 log.warning("Regime detector: no SPY daily candles — defaulting to CHOP")
-                return MarketRegime.CHOP
-            return self._regime_detector.detect(df)
+                regime = MarketRegime.CHOP
+            else:
+                regime = self._regime_detector.detect(df)
         except Exception:
             log.exception("Regime detection failed — defaulting to CHOP")
-            return MarketRegime.CHOP
+            regime = MarketRegime.CHOP
+
+        self._regime_cache = (today, regime)
+        return regime
 
     async def _send_tick_summary(
         self,

@@ -74,6 +74,7 @@ class EarningsCalendar:
         self._override_file = override_file
         self._blackout_days = blackout_days
         self._cache: dict[str, Any] = self._load_cache()
+        self._overrides: dict[str, list[str]] = self._load_overrides()
 
     # ------------------------------------------------------------------
     # Public API
@@ -124,9 +125,8 @@ class EarningsCalendar:
 
     def _get_earnings_dates(self, symbol: str) -> list[date]:
         """Return upcoming earnings dates for *symbol* from cache or yfinance."""
-        overrides = self._load_overrides()
-        if symbol in overrides:
-            return [date.fromisoformat(d) for d in overrides[symbol]]
+        if symbol in self._overrides:
+            return [date.fromisoformat(d) for d in self._overrides[symbol]]
 
         cached = self._cache.get(symbol)
         if cached and self._cache_is_fresh(cached.get("fetched_at", "")):

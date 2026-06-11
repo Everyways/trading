@@ -124,7 +124,7 @@ class RiskManager:
         if account_equity > 0:
             global_daily_pct = -self._daily_global_pnl / account_equity * 100
             if global_daily_pct >= max_daily_pct:
-                return False, (f"global daily loss {global_daily_pct:.2f}% ≥ {max_daily_pct}%")
+                return False, f"global daily loss {global_daily_pct:.2f}% ≥ {max_daily_pct}%"
 
         # 5. Strategy daily loss → pause strategy
         max_strat_daily_pct = Decimal(str(strategy_risk.get("max_daily_loss_pct", 2.0)))
@@ -168,7 +168,7 @@ class RiskManager:
         if order.side == OrderSide.BUY and self._earnings.is_blackout(order.symbol):
             reason = f"{order.symbol}: earnings blackout active"
             self._log_risk_event(
-                event_type=RiskEventType.DAILY_LOSS_LIMIT,
+                event_type=RiskEventType.EARNINGS_BLACKOUT,
                 severity=RiskSeverity.INFO,
                 scope="strategy",
                 message=reason,

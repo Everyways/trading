@@ -74,6 +74,7 @@ class RiskEventType(StrEnum):
     GATE_BYPASSED = "gate_bypassed"
     UNIVERSE_RESOLVED = "universe_resolved"
     RUNNER_CRASH = "runner_crash"
+    EARNINGS_BLACKOUT = "earnings_blackout"
 
 
 class PositionSide(StrEnum):

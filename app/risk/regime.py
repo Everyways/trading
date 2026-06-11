@@ -22,6 +22,8 @@ from enum import StrEnum
 
 import pandas as pd
 
+from app.core.indicators import ema, ewm_atr
+
 log = logging.getLogger(__name__)
 
 _EMA_PERIOD = 200
@@ -86,8 +88,8 @@ class RegimeDetector:
         elif current > q33:
             regime = MarketRegime.CHOP
         elif len(df) >= self._ema_period:
-            ema = df["close"].ewm(span=self._ema_period, adjust=False).mean()
-            if float(df["close"].iloc[-1]) >= float(ema.iloc[-1]):
+            ema_series = ema(df["close"], self._ema_period)
+            if float(df["close"].iloc[-1]) >= float(ema_series.iloc[-1]):
                 regime = MarketRegime.TREND_UP
             else:
                 regime = MarketRegime.TREND_DOWN
@@ -98,12 +100,5 @@ class RegimeDetector:
         return regime
 
     def _compute_atr_pct(self, df: pd.DataFrame) -> pd.Series:
-        high = df["high"]
-        low = df["low"]
-        prev_close = df["close"].shift(1)
-        true_range = pd.concat(
-            [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
-            axis=1,
-        ).max(axis=1)
-        atr = true_range.ewm(span=self._atr_period, adjust=False).mean()
+        atr = ewm_atr(df, self._atr_period)
         return atr / df["close"] * 100
